@@ -6,50 +6,53 @@ import re
 st.set_page_config(page_title="Ittica Catanzaro PRO", page_icon="🐟")
 
 def pulisci_nome_chirurgico(testo):
-    """Taglia il nome non appena iniziano i dati tecnici o le pezzature."""
     if not testo: return "PESCE"
     testo = testo.upper().strip()
-    # Taglia appena vede uno spazio seguito da un numero o pezzature tipo 100-200
+    # Taglia ai numeri o pezzature
     testo = re.split(r'\s\d+', testo)[0]
-    parole_stop = ["EF", "ZONA", "FAO", "PESCATO", "ALLEVATO", "FRANCIA", "ITALIA"]
+    parole_stop = ["EF", "ZONA", "FAO", "PESCATO", "ALLEVATO", "FRANCIA", "ITALIA", "GRECIA"]
     for parola in parole_stop:
         if parola in testo: testo = testo.split(parola)[0]
     return testo.strip().strip('-').strip(',')
 
-def crea_pdf_blindato(p):
-    # Formato 62x100mm - Margini azzerati per usare tutto lo spazio
+def crea_pdf_definitivo(p):
+    # Formato Brother 62x100mm
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
-    pdf.set_margins(left=5, top=5, right=5)
-    pdf.set_auto_page_break(auto=False) # BLOCCO TOTALE SECONDA PAGINA
+    pdf.set_margins(left=5, top=3, right=5)
+    pdf.set_auto_page_break(auto=False)
     pdf.add_page()
     
-    # 1. Nome Commerciale
-    pdf.set_font("helvetica", "B", 14)
+    # --- INTESTAZIONE NEGOZIO ---
+    pdf.set_font("helvetica", "B", 8)
+    pdf.cell(0, 4, "ITTICA CATANZARO - PALERMO", ln=True, align='C')
+    pdf.ln(1)
+    
+    # --- NOME PRODOTTO ---
+    pdf.set_font("helvetica", "B", 16)
     pdf.multi_cell(0, 8, p['nome'], align='C')
     
-    # 2. Nome Scientifico (Ridotto per non uscire dai bordi)
-    pdf.ln(1)
-    font_sci = 9 if len(p['sci']) < 25 else 7 # Se il nome è lungo, rimpicciolisce
+    # --- SCIENTIFICO ---
+    font_sci = 9 if len(p['sci']) < 25 else 7
     pdf.set_font("helvetica", "I", font_sci)
     pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
     
     pdf.ln(2)
     
-    # 3. FAO e Metodo (Più compatti)
-    pdf.set_font("helvetica", "", 9)
+    # --- TRACCIABILITÀ ---
+    pdf.set_font("helvetica", "", 10)
     pdf.cell(0, 5, f"ZONA FAO: {p['fao']} - {p['metodo']}", ln=True, align='C')
     
-    # 4. Box del Lotto (Spostato più in alto per non cadere fuori)
+    # --- BOX LOTTO ---
     pdf.ln(3)
-    pdf.set_font("helvetica", "B", 13)
-    # Riquadro centrato
-    pdf.cell(20) # Sposta a destra
+    pdf.set_font("helvetica", "B", 14)
+    # Calcolo per centrare il box
+    pdf.set_x(25)
     pdf.cell(50, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
     
-    # 5. Data piccolissima in basso
-    pdf.set_y(55) # Forza la posizione a fondo etichetta
+    # --- PIÈ DI PAGINA ---
+    pdf.set_y(54)
     pdf.set_font("helvetica", "", 7)
-    pdf.cell(0, 4, "Data: 07/02/2026", ln=True, align='R')
+    pdf.cell(0, 4, f"Confezionato il: 07/02/2026", ln=True, align='R')
     
     return bytes(pdf.output())
 
@@ -68,11 +71,16 @@ def estrai_dati(file):
             if sci in riga:
                 nome_grezzo = riga.split('(')[0].strip()
                 if len(nome_grezzo) < 3 and j > 0: nome_grezzo = linee[j-1].strip()
+        
         lotto_match = re.search(r'^([A-Z0-9\s/\\-]+)', blocco_post)
         lotto = lotto_match.group(1).strip() if lotto_match else "N.D."
         fao = re.search(r'FAO\s*([\d\.]+)', blocco_pre)
+        
+        # Puliamo il nome già qui per l'interfaccia
+        nome_pulito = pulisci_nome_chirurgico(nome_grezzo)
+        
         prodotti.append({
-            "nome": pulisci_nome_chirurgico(nome_grezzo),
+            "nome": nome_pulito,
             "sci": sci,
             "lotto": lotto,
             "fao": fao.group(1) if fao else "37.2.1",
@@ -86,13 +94,13 @@ file = st.file_uploader("Carica Fattura PDF", type="pdf")
 if file:
     prodotti = estrai_dati(file)
     for i, p in enumerate(prodotti):
+        # L'expander ora è pulitissimo: "📦 TRIGLIA DI SCOGLIO - Lotto: ..."
         with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-            # Creiamo i byte del PDF
-            pdf_bytes = crea_pdf_blindato(p)
+            pdf_bytes = crea_pdf_definitivo(p)
             st.download_button(
-                label="📥 SCARICA ETICHETTA",
+                label="📥 SCARICA ETICHETTA PRONTA",
                 data=pdf_bytes,
-                file_name=f"Etichetta_{i}.pdf",
+                file_name=f"Etichetta_{p['nome']}.pdf",
                 mime="application/pdf",
                 key=f"btn_{i}"
             )
