@@ -16,10 +16,11 @@ def crea_pdf_bytes(p):
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
     pdf.add_page()
     
-    # Nome Pesce (Font standard per evitare errori di caricamento)
+    # Nome Pesce
     pdf.set_font("helvetica", "B", 16)
     pdf.cell(0, 10, p['nome'][:30], ln=True, align='C')
     
+    # Nome Scientifico
     pdf.set_font("helvetica", "I", 10)
     pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
     
@@ -32,7 +33,7 @@ def crea_pdf_bytes(p):
     pdf.set_font("helvetica", "B", 14)
     pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
     
-    # dest='S' restituisce il PDF come byte string, perfetto per il download_button
+    # dest='S' restituisce il PDF come byte string per Python 3.13
     return pdf.output(dest='S')
 
 def estrai_tutto(file):
@@ -65,15 +66,14 @@ file = st.file_uploader("Carica Fattura PDF", type="pdf")
 
 if file:
     prodotti = estrai_tutto(file)
-    for p in prodotti:
+    # Usiamo enumerate per creare l'indice 'i' che mancava
+    for i, p in enumerate(prodotti):
         with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-            # Generiamo i byte qui per essere sicuri che siano freschi
-            pdf_data = crea_pdf_bytes(p)
             
             st.download_button(
                 label=f"Scarica Etichetta {p['lotto']}",
-                data=pdf_data,
+                data=crea_pdf_bytes(p),
                 file_name=f"Etichetta_{p['lotto'].replace(' ', '_')}.pdf",
                 mime="application/pdf",
-                key=f"btn_{p['lotto']}_{i}" # Chiave univoca per evitare conflitti
+                key=f"btn_{p['lotto']}_{i}" 
             )
