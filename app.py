@@ -11,38 +11,23 @@ def pulisci_testo(testo):
         testo = re.sub(rf'\b{p}\b', '', testo)
     return re.sub(r'\s+', ' ', testo).strip()
 
-def crea_pdf_etichetta(p):
-    # Creiamo il PDF con fpdf2
+def crea_pdf_bytes(p):
+    # Generazione PDF ultra-leggera
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
     pdf.add_page()
-    
-    # Nome Pesce
-    pdf.set_font("helvetica", "B", 18)
-    pdf.cell(0, 12, p['nome'], ln=True, align='C')
-    
-    # Nome Scientifico
-    pdf.set_font("helvetica", "I", 10)
-    pdf.cell(0, 6, f"({p['sci']})", ln=True, align='C')
-    
-    pdf.ln(4)
-    
-    # Dati Tecnici
-    pdf.set_font("helvetica", "", 12)
-    pdf.cell(0, 8, f"ZONA FAO: {p['fao']}", ln=True, align='C')
-    pdf.cell(0, 8, f"METODO: {p['metodo']}", ln=True, align='C')
-    
-    pdf.ln(5)
-    
-    # Lotto con bordo
     pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 15, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
-    
-    # Data
-    pdf.set_font("helvetica", "", 8)
-    pdf.cell(0, 8, "Data Arrivo: 07/02/2026", ln=True, align='R')
-    
-    # IMPORTANTE: Convertiamo il PDF in bytes per Streamlit
-    return bytes(pdf.output())
+    pdf.cell(0, 10, p['nome'][:30], ln=True, align='C')
+    pdf.set_font("helvetica", "I", 10)
+    pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
+    pdf.ln(5)
+    pdf.set_font("helvetica", "", 11)
+    pdf.cell(0, 7, f"ZONA FAO: {p['fao']}", ln=True, align='C')
+    pdf.cell(0, 7, f"METODO: {p['metodo']}", ln=True, align='C')
+    pdf.ln(5)
+    pdf.set_font("helvetica", "B", 14)
+    pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
+    # Restituisce i bytes del PDF
+    return pdf.output()
 
 def estrai_tutto(file):
     reader = PdfReader(file)
@@ -59,11 +44,8 @@ def estrai_tutto(file):
             if scientifico in riga:
                 nome_comm = riga.split('(')[0].strip()
                 if len(nome_comm) < 3 and j > 0: nome_comm = linee[j-1].strip()
-        
-        # Migliorata la cattura del lotto (prende tutto fino a nuova riga o spazio lungo)
         lotto_match = re.search(r'^([A-Z0-9\s/\\-]+)', blocco_post)
         lotto = lotto_match.group(1).strip() if lotto_match else "N.D."
-        
         fao_match = re.search(r'FAO\s*([\d\.]+)', blocco_pre)
         fao = fao_match.group(1) if fao_match else "37.2.1"
         metodo = "ALLEVATO" if "ALLEVATO" in blocco_pre else "PESCATO"
@@ -77,12 +59,11 @@ if file:
     prodotti = estrai_tutto(file)
     for p in prodotti:
         with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-            # Generiamo i dati del PDF come bytes
-            pdf_bytes = crea_pdf_etichetta(p)
-            
+            # Creiamo il PDF al momento del click per non appesantire l'app
             st.download_button(
                 label=f"Scarica Etichetta {p['lotto']}",
-                data=pdf_bytes,
+                data=crea_pdf_bytes(p),
                 file_name=f"Etichetta_{p['lotto'].replace(' ', '_')}.pdf",
-                mime="application/pdf"
+                mime="application/pdf",
+                key=f"dl_{p['lotto']}"
             )
