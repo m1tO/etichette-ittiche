@@ -16,14 +16,14 @@ def pulisci_nome_chirurgico(testo):
     
     # 2. LISTA NERA: Parole che NON devono mai essere il nome principale
     lista_nera = [
-        "GRECIA", "ITALIA", "SPAGNA", "FRANCIA", "ACQUACOLTURA", 
+        "GRECIA", "ITALIA", "SPAGNA", "FRANCIA", "NORVEGIA", "ACQUACOLTURA", 
         "ALLEVATO", "FRESCO", "CONGELATO", "ZONA", "FAO", "PRODOTTO",
-        "DESCRIZIONE", "TOTALE", "IMPONIBILE", "PA", "90147"
+        "DESCRIZIONE", "TOTALE", "IMPONIBILE", "UM", "Q.TÀ", "PESCA"
     ]
     for parola in lista_nera:
         testo = testo.replace(parola, "")
 
-    # 3. Taglia alle pezzature (es. 300-400)
+    # 3. Taglia alle pezzature (es. 300-400 o 6/7)
     testo = re.split(r'\d+[\-/]\d+', testo)[0]
     
     # Pulizia finale da simboli e spazi doppi
@@ -31,23 +31,28 @@ def pulisci_nome_chirurgico(testo):
     return testo
 
 def disegna_etichetta(pdf, p):
-    """Disegna l'etichetta 62x100mm per Brother."""
+    """Disegna l'etichetta 62x100mm per Brother in una sola pagina."""
     pdf.add_page()
     pdf.set_font("helvetica", "B", 8)
+    # new_x e new_y per compatibilità Python 3.13 e fpdf2
     pdf.cell(w=pdf.epw, h=4, text="ITTICA CATANZARO - PALERMO", align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
-    # Nome Pesce (Font 15)
+    
+    # Nome Pesce
     pdf.set_font("helvetica", "B", 15)
-    pdf.multi_cell(w=pdf.epw, h=7, text=p['nome'], align='C', new_x="LMARGIN", new_y="NEXT")
-    # Scientifico
+    pdf.multi_cell(w=pdf.epw, h=7, text=p['nome'], align='C')
+    
+    # Scientifico (Rimpicciolisce se troppo lungo per non uscire dai bordi)
     pdf.ln(1)
     f_sci = 9 if len(p['sci']) < 25 else 7
     pdf.set_font("helvetica", "I", f_sci)
-    pdf.multi_cell(w=pdf.epw, h=4, text=f"({p['sci']})", align='C', new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(w=pdf.epw, h=4, text=f"({p['sci']})", align='C')
+    
     # Tracciabilità
     pdf.ln(1)
     pdf.set_font("helvetica", "", 9)
     pdf.cell(w=pdf.epw, h=5, text=f"FAO {p['fao']} - {p['metodo']}", align='C', new_x="LMARGIN", new_y="NEXT")
+    
     # Box Lotto
     pdf.set_y(38)
     l_txt = f"LOTTO: {p['lotto']}"
@@ -55,6 +60,7 @@ def disegna_etichetta(pdf, p):
     pdf.set_font("helvetica", "B", f_l)
     pdf.set_x(10) 
     pdf.cell(w=80, h=11, text=l_txt, border=1, align='C')
+    
     # Data
     pdf.set_y(54)
     pdf.set_font("helvetica", "", 7)
@@ -62,11 +68,11 @@ def disegna_etichetta(pdf, p):
 
 def estrai_dati_hermes(file):
     reader = PdfReader(file)
-    # Legge tutto il testo e lo normalizza
+    # Uniamo il testo in un'unica stringa per evitare perdite nei "vado a capo"
     testo = " ".join([p.extract_text() for p in reader.pages]).upper()
     testo = testo.replace('ΑΙ', ' AI ').replace('FA0', ' FAO ')
     
-    # Dividiamo per la parola LOTTO per isolare ogni riga della fattura
+    # Dividiamo per la parola LOTTO
     blocchi = re.split(r'LOTTO\s*N?\.?\s*', testo)
     risultati = []
     
@@ -78,16 +84,15 @@ def estrai_dati_hermes(file):
         sci_match = re.findall(r'\(([^)]+)\)', testo_prima)
         if not sci_match: continue
         scientifico = sci_match[-1].strip()
-        if any(x in scientifico for x in ["IVA", "KG", "EURO", "DESCRIZIONE"]): continue
+        if any(x in scientifico for x in ["IVA", "KG", "EURO", "PA"]): continue
         
         # 2. Nome Commerciale (cerca prima delle parentesi)
-        # Se trova termini come 'GRECIA', cerca ancora più a sinistra
         nome_sporco = testo_prima.split(f"({scientifico})")[0].strip()
         # Prende l'ultimo pezzo significativo ignorando codici e località
         parti = re.split(r'\s{2,}|\n', nome_sporco)
         nome_grezzo = parti[-1].strip()
         
-        # 3. Lotto
+        # 3. Lotto (prende la prima parola dopo LOTTO e pulisce i prezzi)
         lotto_raw = testo_dopo.split(' ')[0].strip()
         lotto = re.split(r'CAS|KG|UM|\d+,\d+', lotto_raw)[0].strip()
         
@@ -107,7 +112,7 @@ def estrai_dati_hermes(file):
 # --- INTERFACCIA PRINCIPALE ---
 st.title("⚓ FishLabel Scanner PRO")
 
-# TASTO RESET ORA BEN VISIBILE IN ALTO
+# TASTO RESET ROSSO E GIGANTE
 if st.button("🗑️ SVUOTA TUTTO E RICOMINCIA", type="primary"):
     st.session_state.clear()
     st.rerun()
@@ -115,7 +120,7 @@ if st.button("🗑️ SVUOTA TUTTO E RICOMINCIA", type="primary"):
 file = st.file_uploader("Carica Fattura PDF", type="pdf")
 
 if file:
-    # Reset se il file cambia
+    # Reset automatico se carichi un file diverso
     if "last_f" not in st.session_state or st.session_state.last_f != file.name:
         st.session_state.p_list = estrai_dati_hermes(file)
         st.session_state.last_f = file.name
@@ -123,14 +128,21 @@ if file:
     if st.session_state.p_list:
         st.success(f"✅ Trovati {len(st.session_state.p_list)} prodotti.")
         
-        # DOWNLOAD PDF UNICO
+        # DOWNLOAD PDF UNICO (Con fix per bytearray)
         pdf_tot = FPDF(orientation='L', unit='mm', format=(62, 100))
         pdf_tot.set_margins(4, 3, 4)
         pdf_tot.set_auto_page_break(False)
         for p in st.session_state.p_list: disegna_etichetta(pdf_tot, p)
-        st.download_button("🖨️ SCARICA TUTTE LE ETICHETTE", bytes(pdf_tot.output()), "Rullino.pdf")
+        
+        st.download_button(
+            label="🖨️ SCARICA TUTTE LE ETICHETTE (PDF)",
+            data=bytes(pdf_tot.output()), 
+            file_name="Rullino_Etichette.pdf",
+            mime="application/pdf"
+        )
 
         st.markdown("---")
+        # BOX MODIFICA MANUALE (Quello che ami!)
         for i, p in enumerate(st.session_state.p_list):
             with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
                 c1, c2 = st.columns(2)
@@ -141,4 +153,4 @@ if file:
                 pdf_s.set_margins(4, 3, 4)
                 pdf_s.set_auto_page_break(False)
                 disegna_etichetta(pdf_s, p)
-                st.download_button("Scarica PDF", bytes(pdf_s.output()), f"Etic_{i}.pdf", key=f"btn_{i}")
+                st.download_button("Scarica PDF Singolo", bytes(pdf_s.output()), f"Etic_{i}.pdf", key=f"btn_{i}")
