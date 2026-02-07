@@ -2,7 +2,6 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from fpdf import FPDF
 import re
-import base64
 
 st.set_page_config(page_title="Ittica Catanzaro PRO", page_icon="🐟")
 
@@ -13,21 +12,37 @@ def pulisci_testo(testo):
     return re.sub(r'\s+', ' ', testo).strip()
 
 def crea_pdf_etichetta(p):
-    # Creiamo un PDF di dimensioni personalizzate (es. 62mm x 100mm per Brother)
+    # Creiamo il PDF con fpdf2
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, p['nome'], ln=True, align='C')
-    pdf.set_font("Arial", "I", 10)
-    pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
+    
+    # Nome Pesce
+    pdf.set_font("helvetica", "B", 18)
+    pdf.cell(0, 12, p['nome'], ln=True, align='C')
+    
+    # Nome Scientifico
+    pdf.set_font("helvetica", "I", 10)
+    pdf.cell(0, 6, f"({p['sci']})", ln=True, align='C')
+    
+    pdf.ln(4)
+    
+    # Dati Tecnici
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 8, f"ZONA FAO: {p['fao']}", ln=True, align='C')
+    pdf.cell(0, 8, f"METODO: {p['metodo']}", ln=True, align='C')
+    
     pdf.ln(5)
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 7, f"ZONA FAO: {p['fao']}", ln=True, align='C')
-    pdf.cell(0, 7, f"METODO: {p['metodo']}", ln=True, align='C')
-    pdf.ln(5)
-    pdf.set_font("Arial", "B", 15)
-    pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
-    return pdf.output()
+    
+    # Lotto con bordo
+    pdf.set_font("helvetica", "B", 16)
+    pdf.cell(0, 15, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
+    
+    # Data
+    pdf.set_font("helvetica", "", 8)
+    pdf.cell(0, 8, "Data Arrivo: 07/02/2026", ln=True, align='R')
+    
+    # IMPORTANTE: Convertiamo il PDF in bytes per Streamlit
+    return bytes(pdf.output())
 
 def estrai_tutto(file):
     reader = PdfReader(file)
@@ -44,8 +59,11 @@ def estrai_tutto(file):
             if scientifico in riga:
                 nome_comm = riga.split('(')[0].strip()
                 if len(nome_comm) < 3 and j > 0: nome_comm = linee[j-1].strip()
+        
+        # Migliorata la cattura del lotto (prende tutto fino a nuova riga o spazio lungo)
         lotto_match = re.search(r'^([A-Z0-9\s/\\-]+)', blocco_post)
         lotto = lotto_match.group(1).strip() if lotto_match else "N.D."
+        
         fao_match = re.search(r'FAO\s*([\d\.]+)', blocco_pre)
         fao = fao_match.group(1) if fao_match else "37.2.1"
         metodo = "ALLEVATO" if "ALLEVATO" in blocco_pre else "PESCATO"
@@ -53,17 +71,18 @@ def estrai_tutto(file):
     return prodotti
 
 st.title("⚓ FishLabel Scanner PRO")
-file = st.file_uploader("Carica Fattura", type="pdf")
+file = st.file_uploader("Carica Fattura PDF", type="pdf")
 
 if file:
     prodotti = estrai_tutto(file)
     for p in prodotti:
         with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-            pdf_data = crea_pdf_etichetta(p)
-            # Bottone per scaricare e stampare il PDF isolato
+            # Generiamo i dati del PDF come bytes
+            pdf_bytes = crea_pdf_etichetta(p)
+            
             st.download_button(
-                label=f"Genera Etichetta {p['lotto']}",
-                data=pdf_data,
-                file_name=f"Etichetta_{p['lotto']}.pdf",
+                label=f"Scarica Etichetta {p['lotto']}",
+                data=pdf_bytes,
+                file_name=f"Etichetta_{p['lotto'].replace(' ', '_')}.pdf",
                 mime="application/pdf"
             )
