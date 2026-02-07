@@ -1,34 +1,33 @@
 import streamlit as st
 from PyPDF2 import PdfReader
+from fpdf import FPDF
 import re
+import base64
 
 st.set_page_config(page_title="Ittica Catanzaro PRO", page_icon="🐟")
 
-# CSS per gestire la stampa senza pop-up
-st.markdown("""
-    <style>
-    @media print {
-        /* Nasconde tutto ciò che non è l'etichetta */
-        header, footer, .stButton, .stFileUploader, .stExpander, .stMarkdown, [data-testid="stSidebar"] {
-            display: none !important;
-        }
-        .print-only {
-            display: block !important;
-            width: 100%;
-            border: 2px solid black;
-            padding: 20px;
-            text-align: center;
-        }
-    }
-    .print-only { display: none; }
-    </style>
-""", unsafe_allow_html=True)
-
 def pulisci_testo(testo):
-    parole_da_eliminare = ["ATTREZZI", "PESCA", "USATI", "SCI", "AI", "ZONA", "FAO", "N.", "N°"]
-    for p in parole_da_eliminare:
+    parole = ["ATTREZZI", "PESCA", "USATI", "SCI", "AI", "ZONA", "FAO", "N.", "N°"]
+    for p in parole:
         testo = re.sub(rf'\b{p}\b', '', testo)
     return re.sub(r'\s+', ' ', testo).strip()
+
+def crea_pdf_etichetta(p):
+    # Creiamo un PDF di dimensioni personalizzate (es. 62mm x 100mm per Brother)
+    pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, p['nome'], ln=True, align='C')
+    pdf.set_font("Arial", "I", 10)
+    pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
+    pdf.ln(5)
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 7, f"ZONA FAO: {p['fao']}", ln=True, align='C')
+    pdf.cell(0, 7, f"METODO: {p['metodo']}", ln=True, align='C')
+    pdf.ln(5)
+    pdf.set_font("Arial", "B", 15)
+    pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
+    return pdf.output()
 
 def estrai_tutto(file):
     reader = PdfReader(file)
@@ -36,8 +35,7 @@ def estrai_tutto(file):
     sezioni = re.split(r'LOTTO\s*N?\.?\s*', testo)
     prodotti = []
     for i in range(len(sezioni) - 1):
-        blocco_pre = sezioni[i]
-        blocco_post = sezioni[i+1]
+        blocco_pre, blocco_post = sezioni[i], sezioni[i+1]
         sci_match = re.search(r'\((.*?)\)', blocco_pre)
         scientifico = sci_match.group(1) if sci_match else "N.D."
         linee = blocco_pre.strip().split('\n')
@@ -60,22 +58,12 @@ file = st.file_uploader("Carica Fattura", type="pdf")
 if file:
     prodotti = estrai_tutto(file)
     for p in prodotti:
-        with st.expander(f"📦 {p['nome']} - Lotto: {p['lotto']}"):
-            # HTML dell'etichetta che sarà visibile solo in stampa
-            label_html = f"""
-                <div class="print-only">
-                    <h1 style="font-size:40px;">{p['nome']}</h1>
-                    <p style="font-size:22px;"><i>({p['sci']})</i></p>
-                    <hr>
-                    <p style="font-size:24px;">ZONA FAO: <b>{p['fao']}</b></p>
-                    <p style="font-size:24px;">METODO: <b>{p['metodo']}</b></p>
-                    <div style="font-size:36px; border:3px solid black; padding:10px; margin-top:15px; font-weight:bold;">
-                        LOTTO: {p['lotto']}
-                    </div>
-                </div>
-            """
-            st.markdown(label_html, unsafe_allow_html=True)
-            
-            if st.button(f"Prepara Stampa {p['lotto']}", key=f"btn_{p['lotto']}"):
-                # Questo script forza il browser ad aprire la finestra di stampa della pagina stessa
-                st.components.v1.html("<script>window.print();</script>", height=0)
+        with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
+            pdf_data = crea_pdf_etichetta(p)
+            # Bottone per scaricare e stampare il PDF isolato
+            st.download_button(
+                label=f"Genera Etichetta {p['lotto']}",
+                data=pdf_data,
+                file_name=f"Etichetta_{p['lotto']}.pdf",
+                mime="application/pdf"
+            )
