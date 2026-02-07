@@ -6,34 +6,39 @@ import re
 st.set_page_config(page_title="Ittica Catanzaro PRO", page_icon="🐟")
 
 def pulisci_nome_chirurgico(testo):
-    """Pulisce il nome del pesce eliminando indirizzi e dati tecnici."""
+    """Pulisce il nome eliminando indirizzi, codici iniziali e dati tecnici."""
     if not testo: return "PESCE"
-    
-    # 1. Rimuoviamo righe che sembrano indirizzi (es. 90147 PALERMO)
-    testo = re.sub(r'\d{5}\s+PALERMO.*', '', testo)
+    # 1. Rimuove codici numerici lunghi (es. 46668255) o codici articolo (0258)
+    testo = re.sub(r'^\d{4,10}\s+', '', testo)
+    testo = re.sub(r'^\d+\s+', '', testo)
     
     testo = testo.upper().strip()
-    # 2. Taglia ai numeri o pezzature (es. ' 100-200' o ' 300')
+    # 2. Taglia ai numeri di pezzatura (es. 300-400)
     testo = re.split(r'\s\d+', testo)[0]
     
-    # 3. Parole stop
-    parole_stop = ["EF", "ZONA", "FAO", "PESCATO", "ALLEVATO", "ATTREZZI", "PRODOTTO"]
+    # 3. Parole stop Hermes
+    parole_stop = ["PRODOTTO", "PESCA", "PN", "AI", "ZONA", "FAO", "PESCATO", "ALLEVATO"]
     for parola in parole_stop:
         if parola in testo: testo = testo.split(parola)[0]
     
     return testo.strip().strip('-').strip(',').strip()
 
-def disegna_pagina_etichetta(pdf, p):
+def crea_pdf_blindato(p):
+    pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
+    pdf.set_margins(left=4, top=3, right=4)
+    pdf.set_auto_page_break(auto=False)
     pdf.add_page()
+    
+    # Intestazione
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(0, 4, "ITTICA CATANZARO - PALERMO", align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
     
-    # Nome Commerciale
+    # Nome (Multi-riga per nomi lunghi)
     pdf.set_font("helvetica", "B", 15)
     pdf.multi_cell(0, 7, p['nome'], align='C')
     
-    # Scientifico
+    # Scientifico (Rimpicciolisce se lungo)
     pdf.ln(1)
     font_sci = 9 if len(p['sci']) < 25 else 7
     pdf.set_font("helvetica", "I", font_sci)
@@ -44,88 +49,101 @@ def disegna_pagina_etichetta(pdf, p):
     pdf.set_font("helvetica", "", 9)
     pdf.cell(0, 5, f"FAO {p['fao']} - {p['metodo']}", align='C', new_x="LMARGIN", new_y="NEXT")
     
-    # Box Lotto
-    pdf.set_y(38) 
-    pdf.set_font("helvetica", "B", 13)
-    pdf.set_x(25)
-    pdf.cell(50, 11, f"LOTTO: {p['lotto']}", border=1, align='C')
+    # Box Lotto (Font dinamico per lotti lunghi tipo Hermes)
+    pdf.set_y(38)
+    lotto_text = f"LOTTO: {p['lotto']}"
+    font_lotto = 13 if len(lotto_text) < 18 else 10 # Rimpicciolisce se serve
+    pdf.set_font("helvetica", "B", font_lotto)
+    pdf.set_x(15)
+    pdf.cell(70, 11, lotto_text, border=1, align='C')
     
     # Data
     pdf.set_y(54)
     pdf.set_font("helvetica", "", 7)
     pdf.cell(0, 4, f"Confezionato il: 07/02/2026", align='R')
-
-def genera_pdf_unico(prodotti):
-    pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
-    pdf.set_margins(left=4, top=4, right=4)
-    pdf.set_auto_page_break(auto=False)
-    for p in prodotti: disegna_pagina_etichetta(pdf, p)
+    
     return bytes(pdf.output())
 
 def estrai_dati(file):
     reader = PdfReader(file)
-    testo_completo = ""
+    testo = ""
     for page in reader.pages:
-        testo_completo += page.extract_text() + "\n"
+        testo += page.extract_text() + "\n"
     
-    # SICUREZZA: Tagliamo via l'intestazione della fattura fino alla tabella prodotti
-    if "Descrizione" in testo_completo:
-        testo_completo = testo_completo.split("Descrizione", 1)[1]
+    # Taglia via l'intestazione della fattura
+    if "Descrizione" in testo:
+        testo = testo.split("Descrizione", 1)[1]
     
-    testo_completo = testo_completo.upper()
-    sezioni = re.split(r'LOTTO\s*N?\.?\s*', testo_completo)
+    # Normalizzazione testo per facilitare i regex
+    testo = testo.replace('\n', ' ')
+    
+    # 1. Trova tutti i blocchi che iniziano con un nome scientifico tra parentesi
+    # e finiscono con un LOTTO
+    matches = re.findall(r'([A-Z0-9\s\-/]+?)\s*\((.*?)\).*?LOTTO\s*N?\.?\s*([A-Z0-9\s\-/\\.]+)', testo, re.IGNORECASE)
+    
     prodotti = []
-    
-    for i in range(len(sezioni) - 1):
-        blocco_pre = sezioni[i]
-        blocco_post = sezioni[i+1]
+    for m in matches:
+        nome_grezzo = m[0].strip()
+        scientifico = m[1].strip()
+        # Il lotto si ferma se trova "Cas" o "Kg" o numeri decimali (il prezzo)
+        lotto_sporco = m[2].strip()
+        lotto = re.split(r'\s{2,}|Cas|Kg|\d+,\d+', lotto_sporco)[0].strip()
         
-        # 1. Scientifico
-        sci_match = re.search(r'\((.*?)\)', blocco_pre)
-        sci = sci_match.group(1) if sci_match else "N.D."
-        
-        # 2. Nome (Cerca la riga del nome scientifico e pulisce)
-        linee = blocco_pre.strip().split('\n')
-        nome_grezzo = "PESCE"
-        for j, riga in enumerate(linee):
-            if sci in riga:
-                nome_grezzo = riga.split('(')[0].strip()
-                # Se è troppo corto (solo un codice), prendiamo la riga sopra
-                if len(nome_grezzo) < 4 and j > 0:
-                    nome_grezzo = linee[j-1].strip()
-        
-        # 3. Lotto (Migliorato: si ferma al primo spazio lungo o virgola del prezzo)
-        # In image_7a9fc6.png vedevamo SP/14-01-202630. Ora tagliamo prima del prezzo.
-        lotto_match = re.search(r'^([A-Z0-9\-/]+)', blocco_post)
-        lotto = lotto_match.group(1).strip() if lotto_match else "N.D."
-        
-        fao = re.search(r'FAO\s*N?°?\s*([\d\.]+)', blocco_pre)
-        metodo = "ALLEVATO" if "ALLEVATO" in blocco_pre or "ACQUACOLTURA" in blocco_pre else "PESCATO"
+        # Estrazione FAO e Metodo specifica per quel blocco
+        # Cerchiamo nel testo vicino al nome scientifico
+        fao_match = re.search(r'FAO\s*N?°?\s*([\d\.]+)', testo[testo.find(scientifico):testo.find(scientifico)+200])
+        fao = fao_match.group(1) if fao_match else "37.2.1"
+        metodo = "ALLEVATO" if "ALLEVATO" in testo[testo.find(scientifico)-100:testo.find(scientifico)+100] else "PESCATO"
         
         prodotti.append({
             "nome": pulisci_nome_chirurgico(nome_grezzo),
-            "sci": sci,
+            "sci": scientifico,
             "lotto": lotto,
-            "fao": fao.group(1) if fao else "37.2.1",
+            "fao": fao,
             "metodo": metodo
         })
     return prodotti
 
 # --- UI ---
 st.title("⚓ FishLabel Scanner PRO")
-file = st.file_uploader("Trascina la fattura Hermes Fish", type="pdf")
+file = st.file_uploader("Carica Fattura Hermes", type="pdf")
 
 if file:
     prodotti = estrai_dati(file)
     if prodotti:
         st.success(f"Trovati {len(prodotti)} prodotti!")
-        pdf_totale = genera_pdf_unico(prodotti)
-        st.download_button(
-            label="🖨️ SCARICA TUTTE LE ETICHETTA",
-            data=pdf_totale,
-            file_name="Etichette_Hermes.pdf",
-            mime="application/pdf"
-        )
+        
+        # Crea PDF UNICO
+        pdf_f = FPDF(orientation='L', unit='mm', format=(62, 100))
+        pdf_f.set_margins(left=4, top=3, right=4)
+        pdf_f.set_auto_page_break(auto=False)
+        for p in prodotti:
+            # Riutilizziamo la logica di disegno
+            pdf_f.add_page()
+            pdf_f.set_font("helvetica", "B", 8)
+            pdf_f.cell(0, 4, "ITTICA CATANZARO - PALERMO", align='C', new_x="LMARGIN", new_y="NEXT")
+            pdf_f.ln(1)
+            pdf_f.set_font("helvetica", "B", 14)
+            pdf_f.multi_cell(0, 7, p['nome'], align='C')
+            font_sci = 9 if len(p['sci']) < 25 else 7
+            pdf_f.set_font("helvetica", "I", font_sci)
+            pdf_f.multi_cell(0, 4, f"({p['sci']})", align='C')
+            pdf_f.ln(1)
+            pdf_f.set_font("helvetica", "", 9)
+            pdf_f.cell(0, 5, f"FAO {p['fao']} - {p['metodo']}", align='C', new_x="LMARGIN", new_y="NEXT")
+            pdf_f.set_y(38)
+            l_txt = f"LOTTO: {p['lotto']}"
+            f_l = 13 if len(l_txt) < 18 else 10
+            pdf_f.set_font("helvetica", "B", f_l)
+            pdf_f.set_x(15)
+            pdf_f.cell(70, 11, l_txt, border=1, align='C')
+            pdf_f.set_y(54)
+            pdf_f.set_font("helvetica", "", 7)
+            pdf_f.cell(0, 4, "Confezionato il: 07/02/2026", align='R')
+            
+        st.download_button("🖨️ STAMPA TUTTO (PDF UNICO)", data=bytes(pdf_f.output()), file_name="Etichette_Hermes_OK.pdf")
+        
         for i, p in enumerate(prodotti):
             with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-                st.write(f"Scientifico: {p['sci']} | FAO: {p['fao']}")
+                st.write(f"Scientifico: {p['sci']}")
+                st.download_button("Scarica Singola", data=crea_pdf_blindato(p), file_name=f"Etichetta_{i}.pdf", key=f"s_{i}")
