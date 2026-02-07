@@ -44,31 +44,23 @@ def estrai_testo_pdf(file_like):
     pages_text = []
     for p in reader.pages:
         pages_text.append(p.extract_text() or "")
-    testo = "\n".join(pages_text)
 
-    # normalizzazioni comuni
+    testo = "\n".join(pages_text)
     testo = testo.replace("FA0", "FAO").replace("ΑΙ", " AI ")
     return testo
 
 # ----------------------------------
-# NOME: PULIZIA
+# NOME: PULIZIA (solo come fallback)
 # ----------------------------------
 
 def pulisci_nome_chirurgico(testo: str) -> str:
     if not testo:
         return ""
     t = testo.upper().strip()
-
-    # togli eventuale codice iniziale numerico (3-6 cifre)
     t = re.sub(r"^\d{3,6}\s+", "", t)
-
-    # taglia pezzature tipo 300/400 o 400-600
     t = re.split(r"\b\d{2,4}[/\-]\d{2,4}\b", t)[0]
-
-    # rimuovi stopwords (parole intere)
     for w in STOPWORDS:
         t = re.sub(rf"\b{re.escape(w)}\b", " ", t)
-
     t = re.sub(r"\s+", " ", t).strip(" -,.")
     return t
 
@@ -78,6 +70,7 @@ def pulisci_nome_chirurgico(testo: str) -> str:
 
 def load_whitelist_from_json_bytes(raw: bytes) -> set[str]:
     obj = json.loads(raw.decode("utf-8"))
+
     if isinstance(obj, list):
         names = obj
     elif isinstance(obj, dict) and "names" in obj and isinstance(obj["names"], list):
@@ -91,63 +84,38 @@ def load_whitelist_from_json_bytes(raw: bytes) -> set[str]:
         s = re.sub(r"\s+", " ", s)
         if not s:
             continue
-        # IMPORTANTISSIMO: scarta roba troppo corta (evita 'IN', 'DI', ecc.)
-        # Teniamo: >=4 caratteri oppure multi-parola (es. 'DI' da sola non entra comunque)
+        # evita voci troppo corte tipo "IN"
         if len(s) < 4 and " " not in s:
             continue
         wl.add(s)
     return wl
 
 def build_whitelist_regex(whitelist: set[str]) -> re.Pattern:
-    """
-    Regex che matcha qualsiasi nome commerciale presente in whitelist.
-    Ordinamento per lunghezza decrescente -> vince il nome più lungo.
-    """
     if not whitelist:
-        return re.compile(r"(?!)")  # non matcha mai
+        return re.compile(r"(?!)")
 
-    # ordina per lunghezza: prima le frasi lunghe
     ordered = sorted(whitelist, key=len, reverse=True)
-    # escape per regex
     parts = [re.escape(x) for x in ordered]
-    # \b funziona bene anche con spazi interni, delimita l'inizio/fine parola
     pattern = r"\b(?:%s)\b" % "|".join(parts)
     return re.compile(pattern, flags=re.IGNORECASE | re.UNICODE)
 
 def find_name_from_whitelist(text: str, wl_regex: re.Pattern) -> str:
-    """
-    Trova il primo match della regex (che è già ordinata per 'più lungo prima').
-    """
     if not text:
         return ""
     m = wl_regex.search(text.upper())
-    if not m:
-        return ""
-    return m.group(0).upper().strip()
+    return m.group(0).upper().strip() if m else ""
 
 # ----------------------------------
 # LOTTO / SCIENTIFICO / FAO / METODO
 # ----------------------------------
 
-def estrai_lotto(text_up: str) -> str:
-    # LOTTO N. XXX / LOTTO: XXX / LOTTO XXX
-    m = re.search(r"LOTTO\s*(?:N\.?|N°)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-_\.]{2,})", text_up)
-    if m:
-        return m.group(1).strip()
-    m2 = re.search(r"\bLOTTO\s+([A-Z0-9][A-Z0-9\/\-_\.]{2,})\b", text_up)
-    if m2:
-        return m2.group(1).strip()
-    return "DA COMPILARE"
-
 def estrai_scientifico(text_up: str) -> str:
-    # 1) tra parentesi
     m = re.search(r"\(([A-Z][A-Z\s\-]{4,})\)", text_up)
     if m:
         sci = m.group(1).strip()
         if len(sci.split()) >= 2:
             return sci
 
-    # 2) binomiale MAIUSCOLO
     cand = re.findall(r"\b([A-Z]{4,}\s+[A-Z]{4,})\b", text_up)
     for s in cand:
         if any(x in s for x in ["ZONA FAO", "LOTTO", "IMPONIBILE", "TOTALE", "PALERMO", "FATTURA"]):
@@ -163,6 +131,15 @@ def estrai_fao(text_up: str) -> str:
 
 def estrai_metodo(text_up: str) -> str:
     return "ALLEVATO" if any(x in text_up for x in ["ALLEVATO", "ACQUACOLTURA"]) else "PESCATO"
+
+def estrai_lotto_da_blocco(text_up: str) -> str:
+    m = re.search(r"LOTTO\s*(?:N\.?|N°)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-_\.]{2,})", text_up)
+    if m:
+        return m.group(1).strip()
+    m2 = re.search(r"\bLOTTO\s+([A-Z0-9][A-Z0-9\/\-_\.]{2,})\b", text_up)
+    if m2:
+        return m2.group(1).strip()
+    return "DA COMPILARE"
 
 # ----------------------------------
 # STRATEGIA A: FATTURE CON CODICI ARTICOLO
@@ -186,9 +163,8 @@ def estrai_blocchi_prodotti_da_codici(testo: str) -> list[str]:
     for k, i in enumerate(start_idxs):
         j = start_idxs[k + 1] if k + 1 < len(start_idxs) else len(lines)
         block_lines = lines[i:j]
-        if not block_lines:
-            continue
-        blocchi.append("\n".join(block_lines))
+        if block_lines:
+            blocchi.append("\n".join(block_lines))
     return blocchi
 
 def estrai_dati_da_blocchi_codici(testo: str, wl_regex: re.Pattern) -> list[dict]:
@@ -198,10 +174,10 @@ def estrai_dati_da_blocchi_codici(testo: str, wl_regex: re.Pattern) -> list[dict
     for blocco in blocchi:
         b_up = blocco.upper()
 
-        # Nome: PRIMA prova a trovarlo dalla whitelist dentro il blocco intero (non solo prima riga!)
+        # Nome: cerca nel blocco intero usando whitelist (vincente)
         nome = find_name_from_whitelist(blocco, wl_regex)
 
-        # se ancora niente, fallback: prova sulla prima riga pulita
+        # fallback: pulisci prima riga
         if not nome:
             first_line = blocco.splitlines()[0]
             nome = pulisci_nome_chirurgico(first_line)
@@ -209,64 +185,89 @@ def estrai_dati_da_blocchi_codici(testo: str, wl_regex: re.Pattern) -> list[dict
         if not nome or any(x in nome for x in ["PALERMO", "VIA", "FATTURA", "CLIENTE"]):
             continue
 
-        lotto = estrai_lotto(b_up)
+        lotto = estrai_lotto_da_blocco(b_up)
         sci = estrai_scientifico(b_up)
         fao = estrai_fao(b_up)
         metodo = estrai_metodo(b_up)
 
-        # validazione minima: deve avere almeno lotto o scientifico o nome whitelist
-        if lotto == "DA COMPILARE" and sci == "DA COMPILARE" and not nome:
-            continue
-
         risultati.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
 
     return risultati
 
 # ----------------------------------
-# STRATEGIA B: FATTURE SENZA CODICI (tabella)
+# STRATEGIA B: FATTURE SENZA CODICI (TABELLARE) - FIX LOTTI CON SPAZI
 # ----------------------------------
 
 def estrai_dati_tabella_senza_codici(testo: str, wl_regex: re.Pattern) -> list[dict]:
-    """
-    Trova occorrenze di LOTTO nel testo e cerca il nome commerciale nella finestra vicina
-    usando la whitelist (match esatto).
-    """
-    up = testo.upper()
-    risultati = []
+    lines = [ln.strip() for ln in (testo or "").splitlines() if ln.strip()]
+    results = []
 
-    for m in re.finditer(r"LOTTO\s*(?:N\.?|N°)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-_\.]{2,})", up):
-        lotto = m.group(1).strip()
-        idx = m.start()
+    def extract_lotto_from_line(line_up: str) -> str:
+        # cattura anche lotti con spazio tipo "K 33/A"
+        m = re.search(
+            r"LOTTO\s*(?:N\.?|N°)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-_\. ]{1,25})",
+            line_up
+        )
+        if not m:
+            return ""
+        raw = m.group(1)
+        raw = re.split(r"\b(IVA|TOTALE|IMPORTO|QUANTITÀ|QUANTITA|€)\b", raw)[0]
+        raw = re.sub(r"\s+", " ", raw).strip(" -,:;.")
+        return raw
 
-        # finestra vicina al lotto (prima e dopo)
-        win = testo[max(0, idx - 500): idx + 200]
-        win_up = win.upper()
+    for i, ln in enumerate(lines):
+        up = ln.upper()
+        if "LOTTO" not in up:
+            continue
 
-        nome = find_name_from_whitelist(win, wl_regex)
-        sci = estrai_scientifico(win_up)
-        fao = estrai_fao(win_up)
-        metodo = estrai_metodo(win_up)
+        lotto = extract_lotto_from_line(up)
+        if not lotto:
+            continue
 
-        # se non trova nome nemmeno qui, prova a risalire riga per riga
+        # cerca nome nelle righe sopra (finestra ampia)
+        nome = ""
+        for j in range(i, max(-1, i - 8), -1):
+            cand = lines[j]
+            cand_up = cand.upper()
+            if any(x in cand_up for x in HEADER_NOISE):
+                continue
+            nome = find_name_from_whitelist(cand, wl_regex)
+            if nome:
+                break
+
+        # se non trovato sopra, prova sotto
         if not nome:
-            # prova righe precedenti (dal testo originale)
-            left = testo[max(0, idx - 600): idx]
-            lines = [ln.strip() for ln in left.splitlines() if ln.strip()]
-            for ln in reversed(lines):
-                uln = ln.upper()
-                if any(x in uln for x in HEADER_NOISE):
+            for j in range(i + 1, min(len(lines), i + 6)):
+                cand = lines[j]
+                cand_up = cand.upper()
+                if any(x in cand_up for x in HEADER_NOISE):
                     continue
-                nome_try = find_name_from_whitelist(ln, wl_regex)
-                if nome_try:
-                    nome = nome_try
+                nome = find_name_from_whitelist(cand, wl_regex)
+                if nome:
                     break
+
+        # finestra attorno per scientifico/FAO/metodo
+        around = " ".join(lines[max(0, i - 6): min(len(lines), i + 6)])
+        around_up = around.upper()
+
+        sci = estrai_scientifico(around_up)
+        fao = estrai_fao(around_up)
+        metodo = estrai_metodo(around_up)
 
         if not nome:
             nome = "DA COMPILARE"
 
-        risultati.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
+        results.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
 
-    return risultati
+    # dedup per lotto
+    seen = set()
+    out = []
+    for r in results:
+        k = r["lotto"].upper().strip()
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
 
 # ----------------------------------
 # ESTRAZIONE UNIFICATA
@@ -275,14 +276,12 @@ def estrai_dati_tabella_senza_codici(testo: str, wl_regex: re.Pattern) -> list[d
 def estrai_dati(file_like, wl_regex: re.Pattern) -> list[dict]:
     testo = estrai_testo_pdf(file_like)
 
-    # 1) prova strategia codici
     risultati = estrai_dati_da_blocchi_codici(testo, wl_regex)
 
-    # 2) fallback tabella senza codici (o se risultati vuoti / troppo pochi)
     if not risultati:
         risultati = estrai_dati_tabella_senza_codici(testo, wl_regex)
 
-    # dedup per (nome, lotto, sci)
+    # dedup finale (nome, lotto, sci)
     seen = set()
     out = []
     for r in risultati:
@@ -331,10 +330,8 @@ def disegna_etichetta(pdf, p):
 
 st.title("⚓ FishLabel Scanner PRO")
 
-# Carica whitelist + costruisci regex matcher
 with st.expander("📚 Carica whitelist nomi pesce (JSON)"):
     st.caption('Accetta lista ["ORATA", ...] oppure oggetto {"names":[...]}')
-
     wl_file = st.file_uploader("Carica JSON whitelist", type=["json"], key="wl_json")
 
     whitelist = set(DEFAULT_WHL)
@@ -345,7 +342,6 @@ with st.expander("📚 Carica whitelist nomi pesce (JSON)"):
         except Exception:
             st.error("JSON non valido o formato non supportato.")
 
-# matcher pronto (usa whitelist caricata o default)
 wl_regex = build_whitelist_regex(whitelist)
 
 if st.button("🗑️ SVUOTA TUTTO E RICOMINCIA", type="primary"):
