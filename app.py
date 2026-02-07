@@ -2,6 +2,8 @@ import streamlit as st
 from PyPDF2 import PdfReader
 from fpdf import FPDF
 import re
+import tempfile
+import os
 
 st.set_page_config(page_title="Ittica Catanzaro PRO", page_icon="🐟")
 
@@ -11,30 +13,40 @@ def pulisci_testo(testo):
         testo = re.sub(rf'\b{p}\b', '', testo)
     return re.sub(r'\s+', ' ', testo).strip()
 
-def crea_pdf_bytes(p):
-    # Generazione PDF compatibile con Python 3.13
-    pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
-    pdf.add_page()
+def crea_pdf_file(p):
+    # Creiamo un file temporaneo sul server
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
+        pdf.add_page()
+        
+        # Nome Pesce
+        pdf.set_font("helvetica", "B", 16)
+        pdf.cell(0, 10, p['nome'][:30], ln=True, align='C')
+        
+        # Nome Scientifico
+        pdf.set_font("helvetica", "I", 10)
+        pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
+        
+        pdf.ln(5)
+        pdf.set_font("helvetica", "", 11)
+        pdf.cell(0, 7, f"ZONA FAO: {p['fao']}", ln=True, align='C')
+        pdf.cell(0, 7, f"METODO: {p['metodo']}", ln=True, align='C')
+        
+        pdf.ln(5)
+        pdf.set_font("helvetica", "B", 14)
+        pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
+        
+        # Salviamo nel file temporaneo
+        pdf.output(tmp.name)
+        tmp_path = tmp.name
     
-    # Nome Pesce
-    pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, p['nome'][:30], ln=True, align='C')
+    # Leggiamo i dati dal file per il download
+    with open(tmp_path, "rb") as f:
+        data = f.read()
     
-    # Nome Scientifico
-    pdf.set_font("helvetica", "I", 10)
-    pdf.cell(0, 5, f"({p['sci']})", ln=True, align='C')
-    
-    pdf.ln(5)
-    pdf.set_font("helvetica", "", 11)
-    pdf.cell(0, 7, f"ZONA FAO: {p['fao']}", ln=True, align='C')
-    pdf.cell(0, 7, f"METODO: {p['metodo']}", ln=True, align='C')
-    
-    pdf.ln(5)
-    pdf.set_font("helvetica", "B", 14)
-    pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
-    
-    # IMPORTANTE: In Python 3.13 forziamo la conversione in bytes puri
-    return bytes(pdf.output())
+    # Puliamo il server eliminando il file temporaneo
+    os.unlink(tmp_path)
+    return data
 
 def estrai_tutto(file):
     reader = PdfReader(file)
@@ -68,15 +80,16 @@ if file:
     prodotti = estrai_tutto(file)
     for i, p in enumerate(prodotti):
         with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-            # Generazione sicura dei dati binari
             try:
-                pdf_data = crea_pdf_bytes(p)
+                # Generiamo il contenuto del PDF in modo sicuro
+                pdf_data = crea_pdf_file(p)
+                
                 st.download_button(
                     label=f"Scarica Etichetta {p['lotto']}",
                     data=pdf_data,
-                    file_name=f"Etichetta_{p['lotto'].replace(' ', '_')}.pdf",
+                    file_name=f"Etichetta_{i}.pdf",
                     mime="application/pdf",
-                    key=f"btn_{i}_{p['lotto']}"
+                    key=f"btn_final_{i}"
                 )
             except Exception as e:
-                st.error(f"Errore nella creazione del PDF: {e}")
+                st.error(f"Errore tecnico: {e}")
