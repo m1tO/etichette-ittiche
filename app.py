@@ -12,7 +12,7 @@ def pulisci_testo(testo):
     return re.sub(r'\s+', ' ', testo).strip()
 
 def crea_pdf_bytes(p):
-    # Generazione PDF specifica per Python 3.13 e Streamlit
+    # Generazione PDF compatibile con Python 3.13
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
     pdf.add_page()
     
@@ -33,8 +33,8 @@ def crea_pdf_bytes(p):
     pdf.set_font("helvetica", "B", 14)
     pdf.cell(0, 12, f"LOTTO: {p['lotto']}", border=1, ln=True, align='C')
     
-    # dest='S' restituisce il PDF come byte string per Python 3.13
-    return pdf.output(dest='S')
+    # IMPORTANTE: In Python 3.13 forziamo la conversione in bytes puri
+    return bytes(pdf.output())
 
 def estrai_tutto(file):
     reader = PdfReader(file)
@@ -66,14 +66,17 @@ file = st.file_uploader("Carica Fattura PDF", type="pdf")
 
 if file:
     prodotti = estrai_tutto(file)
-    # Usiamo enumerate per creare l'indice 'i' che mancava
     for i, p in enumerate(prodotti):
         with st.expander(f"📦 {p['nome']} - {p['lotto']}"):
-            
-            st.download_button(
-                label=f"Scarica Etichetta {p['lotto']}",
-                data=crea_pdf_bytes(p),
-                file_name=f"Etichetta_{p['lotto'].replace(' ', '_')}.pdf",
-                mime="application/pdf",
-                key=f"btn_{p['lotto']}_{i}" 
-            )
+            # Generazione sicura dei dati binari
+            try:
+                pdf_data = crea_pdf_bytes(p)
+                st.download_button(
+                    label=f"Scarica Etichetta {p['lotto']}",
+                    data=pdf_data,
+                    file_name=f"Etichetta_{p['lotto'].replace(' ', '_')}.pdf",
+                    mime="application/pdf",
+                    key=f"btn_{i}_{p['lotto']}"
+                )
+            except Exception as e:
+                st.error(f"Errore nella creazione del PDF: {e}")
