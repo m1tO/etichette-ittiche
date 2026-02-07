@@ -14,21 +14,22 @@ st.set_page_config(page_title="Ittica Catanzaro PRO", page_icon="🐟")
 
 DEFAULT_WHL = {"SALMONE", "ORATA", "SPIGOLA", "SEPPIA", "CALAMARO", "POLPO", "TRIGLIA"}
 
-# parole “tecniche” che non vuoi nel nome etichetta
 STOPWORDS = {
     "FRESCO", "ALLEVATO", "ACQUACOLTURA", "CONGELATO", "SURGELATO",
     "GRECIA", "MALTA", "NORVEGIA", "SPAGNA", "FRANCIA", "ITALIA",
     "ZONA", "FAO", "KG", "UM", "SBG", "LM", "MM", "CM",
     "IMPONIBILE", "TOTALE", "IVA", "EURO", "€",
     "INTERO", "INTERA", "FILETTO", "FILETTI", "TRANCIO", "TRANCE",
-    "BUSTA", "SOTTOVUOTO", "FRES", "CONG"
+    "BUSTA", "SOTTOVUOTO", "FRES", "CONG",
+    "PRODOTTO", "DELLA", "PESCA", "PESCATO", "ATTREZZI", "USATI", "SCI"
 }
 
-# parole che indicano righe header/indirizzi (per evitare “PALERMO” come prodotto)
 HEADER_NOISE = [
     "PALERMO", "VIA", "CORSO", "PIAZZA", "P.IVA", "PARTITA IVA", "CODICE FISCALE",
     "FATTURA", "DDT", "DOCUMENTO", "CLIENTE", "DESTINAZIONE",
-    "TEL", "EMAIL", "CAP", "PROV", "(PA)", " IT ", " IT-"
+    "TEL", "EMAIL", "CAP", "PROV", "(PA)", " IT ", " IT-",
+    "AGENZIA", "ENTRATE", "FATTURE E CORRISPETTIVI", "TERMINI DI PAGAMENTO",
+    "IMPONIBILE", "IMPOSTA", "TOTALE", "SCADENZE", "PEC", "SPETTABILE"
 ]
 
 # ----------------------------------
@@ -37,22 +38,6 @@ HEADER_NOISE = [
 
 def sim(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
-
-def best_fuzzy(candidate: str, whitelist: set[str]) -> tuple[str, float]:
-    if not candidate or not whitelist:
-        return "", 0.0
-    c = candidate.upper().strip()
-    best_name, best_score = "", 0.0
-    for w in whitelist:
-        if abs(len(w) - len(c)) > 12:
-            continue
-        s = sim(c, w)
-        if s > best_score:
-            best_score = s
-            best_name = w
-            if best_score > 0.93:
-                break
-    return best_name, best_score
 
 # ----------------------------------
 # NOME: PULIZIA + HARD WHITELIST
@@ -63,16 +48,17 @@ def pulisci_nome_chirurgico(testo: str) -> str:
         return ""
     t = testo.upper().strip()
 
-    # togli codice articolo iniziale (3-6 cifre)
+    # togli eventuale codice iniziale numerico
     t = re.sub(r"^\d{3,6}\s+", "", t)
 
     # taglia pezzature tipo 300/400 o 400-600
     t = re.split(r"\b\d{2,4}[/\-]\d{2,4}\b", t)[0]
 
-    # rimuovi stopwords come parole intere
+    # rimuovi stopwords (parole intere)
     for w in STOPWORDS:
         t = re.sub(rf"\b{re.escape(w)}\b", " ", t)
 
+    # normalizza spazi
     t = re.sub(r"\s+", " ", t).strip(" -,.")
     return t
 
@@ -80,6 +66,7 @@ def normalizza_nome_con_whitelist(nome_raw: str, whitelist: set[str]) -> str:
     """
     HARD MODE:
     se riconosce un nome presente in whitelist (anche fuzzy), ritorna SOLO quello.
+    altrimenti ritorna il nome pulito.
     """
     base = pulisci_nome_chirurgico(nome_raw)
     if not base:
@@ -88,19 +75,18 @@ def normalizza_nome_con_whitelist(nome_raw: str, whitelist: set[str]) -> str:
     wl = set(w.upper().strip() for w in whitelist if w and str(w).strip())
     base_spaced = f" {base} "
 
-    # 1) match diretto (frase o parola)
+    # match diretto
     for w in wl:
         if f" {w} " in base_spaced:
             return w
 
-    # 2) fuzzy su token e su stringa intera
+    # fuzzy su token e stringa intera
     words = base.split()
     best_name, best_score = "", 0.0
     for w in wl:
         s_full = sim(base, w)
         if s_full > best_score:
             best_score, best_name = s_full, w
-
         for token in words:
             s_tok = sim(token, w)
             if s_tok > best_score:
@@ -125,23 +111,26 @@ def estrai_testo_pdf(file_like):
     pages_text = []
     for p in reader.pages:
         pages_text.append(p.extract_text() or "")
-
     testo = "\n".join(pages_text)
-    return testo.replace("FA0", "FAO").replace("ΑΙ", " AI ")
+
+    # normalizzazioni
+    testo = testo.replace("FA0", "FAO").replace("ΑΙ", " AI ")
+    return testo
 
 # ----------------------------------
-# BLOCCO PRODOTTI: start per codice + validazione col blocco
+# STRATEGIA 1: BLOCCHI DA CODICE ARTICOLO (se presenti)
 # ----------------------------------
 
 def is_probable_code_line(line: str) -> bool:
-    """Candidata a inizio articolo: 3-6 cifre + testo, non header."""
     if not line:
         return False
     up = line.upper().strip()
 
+    # deve iniziare con 3-6 cifre + testo
     if not re.match(r"^\d{3,6}\s+\S", up):
         return False
 
+    # no header
     if any(x in up for x in HEADER_NOISE):
         return False
 
@@ -169,7 +158,7 @@ def block_has_whitelist_match(first_line: str, whitelist: set[str]) -> bool:
         if f" {w} " in base_spaced:
             return True
 
-    # fuzzy leggero sulle singole parole
+    # fuzzy leggero su token
     words = base.split()
     for token in words:
         for w in whitelist:
@@ -182,12 +171,7 @@ def block_has_whitelist_match(first_line: str, whitelist: set[str]) -> bool:
                 return True
     return False
 
-def estrai_blocchi_prodotti(testo: str, whitelist: set[str]) -> list[str]:
-    """
-    1) prende tutte le righe che iniziano con codice (3-6 cifre)
-    2) crea blocchi fino al prossimo codice
-    3) filtra i blocchi: devono contenere LOTTO/scientifico oppure match whitelist
-    """
+def estrai_blocchi_prodotti_da_codici(testo: str, whitelist: set[str]) -> list[str]:
     lines = [ln.strip() for ln in testo.splitlines() if ln.strip()]
     start_idxs = [i for i, ln in enumerate(lines) if is_probable_code_line(ln)]
 
@@ -200,7 +184,6 @@ def estrai_blocchi_prodotti(testo: str, whitelist: set[str]) -> list[str]:
 
         blocco = "\n".join(block_lines)
         b_up = blocco.upper()
-
         first_line = block_lines[0]
 
         if block_has_scientific_or_lotto(b_up) or block_has_whitelist_match(first_line, whitelist):
@@ -209,7 +192,91 @@ def estrai_blocchi_prodotti(testo: str, whitelist: set[str]) -> list[str]:
     return blocchi
 
 # ----------------------------------
-# SCIENTIFICO / LOTTO / FAO / METODO
+# STRATEGIA 2: TABELLA SENZA CODICI (come il tuo PDF)
+# ----------------------------------
+
+def estrai_dati_tabella_senza_codici(testo: str, whitelist: set[str]) -> list[dict]:
+    """
+    Per fatture dove i prodotti NON hanno codice articolo a inizio riga.
+    Logica:
+    - lavora sul testo "upper" in una singola stringa
+    - trova tutti i LOTTO N. <lotto>
+    - per ciascun lotto risale allo scientifico più vicino precedente "(...)"
+    - e risale al nome commerciale prima dello scientifico (prima riga utile)
+    """
+    t = (testo or "")
+    up = t.upper()
+
+    risultati = []
+
+    # trova tutte le occorrenze di LOTTO
+    for m in re.finditer(r"LOTTO\s*N\.?\s*([A-Z0-9][A-Z0-9\/\-_\. ]{1,30})", up):
+        lotto = m.group(1).strip()
+        lotto = re.sub(r"\s+", " ", lotto).strip(" -,:;.")
+        idx = m.start()
+
+        # cerca lo scientifico precedente (ultimo tra parentesi prima del lotto)
+        left = up[max(0, idx - 600):idx]
+        sci_matches = list(re.finditer(r"\(([^)]+)\)", left))
+        sci = "DA COMPILARE"
+        if sci_matches:
+            sci_raw = sci_matches[-1].group(1).strip()
+            if not any(x in sci_raw for x in ["IVA", "EURO", "KG", "FAO", "IMPONIBILE", "TOTALE", "UM", "QTA", "Q.TÀ"]):
+                sci = re.sub(r"\s+", " ", sci_raw)
+
+        # nome commerciale: prendiamo testo prima dello scientifico (o prima del lotto se sci non trovato)
+        if sci != "DA COMPILARE" and sci_matches:
+            sci_pos = sci_matches[-1].start()
+            left2 = left[:sci_pos]  # testo prima delle parentesi
+        else:
+            left2 = left
+
+        # prendi l'ultima "riga" utile (split su newline originali: usiamo una finestra dal testo originale)
+        # ricostruiamo finestra originale correlata
+        orig_left = t[max(0, idx - 600):idx]
+        orig_lines = [ln.strip() for ln in orig_left.splitlines() if ln.strip()]
+
+        # scarta righe header/noise, prendi l'ultima riga “descrittiva”
+        nome_raw = ""
+        for ln in reversed(orig_lines):
+            uln = ln.upper()
+            if any(x in uln for x in HEADER_NOISE):
+                continue
+            # deve contenere lettere
+            if not re.search(r"[A-ZÀ-Ü]", uln):
+                continue
+            # evita righe di totali/prezzi
+            if any(x in uln for x in ["IMPONIBILE", "IMPOSTA", "TOTALE", "SCADENZE", "CONTANTI"]):
+                continue
+            nome_raw = ln
+            break
+
+        nome = normalizza_nome_con_whitelist(nome_raw, whitelist) if nome_raw else "DA COMPILARE"
+
+        # FAO vicino: nella finestra prima del lotto
+        fao = "37.2.1"
+        fao_m = re.search(r"FAO\s*N?°?\s*([0-9]{1,2}(?:\.[0-9]{1,2}){1,3})", left)
+        if fao_m:
+            fao = fao_m.group(1)
+
+        # metodo
+        metodo = "ALLEVATO" if any(x in left for x in ["ALLEVATO", "ACQUACOLTURA"]) else "PESCATO"
+
+        risultati.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
+
+    # dedup per lotto (spesso è univoco)
+    seen = set()
+    out = []
+    for r in risultati:
+        k = (r["lotto"].upper().strip(), r["sci"].upper().strip())
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+
+    return out
+
+# ----------------------------------
+# SCIENTIFICO / LOTTO / FAO / METODO (per strategia codici)
 # ----------------------------------
 
 def estrai_scientifico(blocco_up: str) -> str:
@@ -240,36 +307,41 @@ def estrai_lotto(blocco_up: str) -> str:
     return "DA COMPILARE"
 
 # ----------------------------------
-# ESTRAZIONE DATI
+# ESTRAZIONE UNIFICATA
 # ----------------------------------
 
-def estrai_dati(file_like, whitelist: set[str]):
+def estrai_dati(file_like, whitelist: set[str]) -> list[dict]:
     testo = estrai_testo_pdf(file_like)
-    blocchi = estrai_blocchi_prodotti(testo, whitelist)
 
+    # 1) prova strategia codici articolo
+    blocchi = estrai_blocchi_prodotti_da_codici(testo, whitelist)
     risultati = []
-    for blocco in blocchi:
-        b_up = blocco.upper()
 
-        first_line = blocco.splitlines()[0]
-        nome = normalizza_nome_con_whitelist(first_line, whitelist)
+    if blocchi:
+        for blocco in blocchi:
+            b_up = blocco.upper()
+            first_line = blocco.splitlines()[0]
+            nome = normalizza_nome_con_whitelist(first_line, whitelist)
 
-        # extra safety: se ancora sembra header, scarta
-        if any(x in nome for x in ["PALERMO", "VIA", "FATTURA", "CLIENTE"]):
-            continue
+            # safety anti header
+            if any(x in nome for x in ["PALERMO", "VIA", "FATTURA", "CLIENTE"]):
+                continue
 
-        lotto = estrai_lotto(b_up)
+            lotto = estrai_lotto(b_up)
 
-        fao_m = re.search(r"FAO\s*([0-9]{1,2}(?:\.[0-9]{1,2}){1,3})", b_up)
-        fao = fao_m.group(1) if fao_m else "37.2.1"
+            fao_m = re.search(r"FAO\s*([0-9]{1,2}(?:\.[0-9]{1,2}){1,3})", b_up)
+            fao = fao_m.group(1) if fao_m else "37.2.1"
 
-        metodo = "ALLEVATO" if any(x in b_up for x in ["ALLEVATO", "ACQUACOLTURA"]) else "PESCATO"
+            metodo = "ALLEVATO" if any(x in b_up for x in ["ALLEVATO", "ACQUACOLTURA"]) else "PESCATO"
+            sci = estrai_scientifico(b_up)
 
-        sci = estrai_scientifico(b_up)
+            risultati.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
 
-        risultati.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
+    # 2) fallback: tabella senza codici
+    if not risultati:
+        risultati = estrai_dati_tabella_senza_codici(testo, whitelist)
 
-    # dedup per evitare doppioni
+    # dedup finale
     seen = set()
     out = []
     for r in risultati:
@@ -277,6 +349,7 @@ def estrai_dati(file_like, whitelist: set[str]):
         if k not in seen:
             seen.add(k)
             out.append(r)
+
     return out
 
 # ----------------------------------
