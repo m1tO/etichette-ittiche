@@ -20,12 +20,12 @@ def crea_pdf_blindato(p):
     # Formato 62x100mm - Brother
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
     pdf.set_margins(left=5, top=3, right=5)
-    pdf.set_auto_page_break(auto=False)
+    pdf.set_auto_page_break(auto=False) # BLOCCO TOTALE 2° PAGINA
     pdf.add_page()
     
     # 1. INTESTAZIONE NEGOZIO
     pdf.set_font("helvetica", "B", 8)
-    # Aggiornato per fpdf2: new_x="LMARGIN", new_y="NEXT" sostituisce ln=True
+    # new_x="LMARGIN", new_y="NEXT" sostituisce il vecchio ln=True per Python 3.13
     pdf.cell(0, 4, "ITTICA CATANZARO - PALERMO", align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
     
@@ -33,7 +33,7 @@ def crea_pdf_blindato(p):
     pdf.set_font("helvetica", "B", 14)
     pdf.multi_cell(0, 7, p['nome'], align='C')
     
-    # 3. NOME SCIENTIFICO (Multi-riga se troppo lungo)
+    # 3. NOME SCIENTIFICO (Multi-riga se troppo lungo per evitare overflow)
     pdf.ln(1)
     font_sci = 9 if len(p['sci']) < 25 else 7
     pdf.set_font("helvetica", "I", font_sci)
@@ -44,7 +44,7 @@ def crea_pdf_blindato(p):
     pdf.set_font("helvetica", "", 9)
     pdf.cell(0, 5, f"FAO {p['fao']} - {p['metodo']}", align='C', new_x="LMARGIN", new_y="NEXT")
     
-    # 5. BOX LOTTO (Posizione fissa per evitare salti pagina)
+    # 5. BOX LOTTO (Posizione fissa alta per non cadere fuori dal foglio)
     pdf.set_y(38) 
     pdf.set_font("helvetica", "B", 13)
     pdf.set_x(25)
@@ -55,7 +55,8 @@ def crea_pdf_blindato(p):
     pdf.set_font("helvetica", "", 7)
     pdf.cell(0, 4, "Confezionato il: 07/02/2026", align='R')
     
-    return pdf.output()
+    # Convertiamo bytearray in bytes per Streamlit
+    return bytes(pdf.output())
 
 def estrai_dati(file):
     reader = PdfReader(file)
@@ -96,7 +97,7 @@ file = st.file_uploader("Trascina qui la fattura PDF", type="pdf")
 if file:
     prodotti = estrai_dati(file)
     for i, p in enumerate(prodotti):
-        # UI pulita: mostra solo il nome pesce e lotto
+        # UI pulita: mostra solo il nome pesce e lotto senza sporcizia
         with st.expander(f"📦 {p['nome']} - Lotto: {p['lotto']}"):
             try:
                 # Generazione PDF sicura per Python 3.13
