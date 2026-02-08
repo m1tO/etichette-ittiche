@@ -4,26 +4,22 @@ from PyPDF2 import PdfReader
 from fpdf import FPDF
 import json
 import os
+import base64
 from datetime import datetime, timedelta
+import fitz  # PyMuPDF
+import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAZIONE E TEMA DARK ---
+# --- 1. CONFIGURAZIONE E TEMA ---
 st.set_page_config(page_title="FishLabel Dark", page_icon="🐟", layout="wide")
 
-# CSS: Sfondo Scuro, Bottoni Compatti, Card Eleganti
 st.markdown("""
 <style>
-    /* Sfondo Generale Scuro */
-    .stApp {
-        background-color: #0e1117;
-        color: #fafafa;
-    }
-    
-    /* Nascondi menu standard */
+    .stApp { background-color: #0e1117; color: #fafafa; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
-    /* Stile Card Prodotto (Sfondo leggermente più chiaro del nero) */
+    /* Card Prodotto */
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: #262730;
         border: 1px solid #464b5c;
@@ -39,21 +35,11 @@ st.markdown("""
         border: 1px solid #464b5c !important;
     }
     
-    /* Bottoni: NON più larghezza intera, ma compatti */
+    /* Bottoni */
     div.stButton > button {
-        width: auto !important;
-        min-width: 120px;
-        height: 40px;
         border-radius: 6px;
         font-weight: 600;
         border: none;
-        transition: all 0.2s;
-    }
-    
-    /* Hover effetti bottoni */
-    div.stButton > button:hover {
-        transform: scale(1.02);
-        box-shadow: 0 2px 8px rgba(255,255,255,0.1);
     }
     
     /* Titoli */
@@ -70,8 +56,7 @@ MEMORIA_FILE = "memoria_nomi.json"
 def carica_memoria():
     if os.path.exists(MEMORIA_FILE):
         try:
-            with open(MEMORIA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(MEMORIA_FILE, "r", encoding="utf-8") as f: return json.load(f)
         except: return {}
     return {}
 
@@ -90,10 +75,8 @@ else:
 def chiedi_a_gemini(testo_pdf):
     if not api_key: return []
     genai.configure(api_key=api_key)
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-    except:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+    try: model = genai.GenerativeModel('gemini-2.5-flash')
+    except: model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"Estrai JSON da fattura ittica: nome, sci (scientifico), lotto, fao, metodo, conf (data confezionamento). Testo: {testo_pdf}"
     
@@ -104,60 +87,65 @@ def chiedi_a_gemini(testo_pdf):
         return dati if isinstance(dati, list) else []
     except: return []
 
-# --- 3. MOTORE PDF (FIX CRASH) ---
+# --- 3. MOTORE PDF (FIX ALLINEAMENTO LANDSCAPE) ---
 def pulisci(t):
     return str(t).replace("€", "EUR").encode('latin-1', 'replace').decode('latin-1') if t else ""
 
 def disegna_su_pdf(pdf, p):
     pdf.add_page()
-    # Margini espliciti: Sinistra 4, Alto 3, Destra 4
-    pdf.set_margins(4, 3, 4)
+    # Margini: Sinistra 2, Alto 3, Destra 2 (più stretti per sfruttare i 100mm)
+    pdf.set_margins(2, 3, 2)
     
-    # Larghezza effettiva area stampabile (62 - 4 - 4 = 54mm)
-    w_eff = 54 
+    # Larghezza Pagina: 100mm. Usiamo w=0 per dire "tutta la larghezza"
     
     # Intestazione
     pdf.set_font("helvetica", "B", 8)
-    pdf.cell(w_eff, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
+    pdf.cell(0, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.ln(1)
     
     # Nome (Grande)
     nome = pulisci(p.get('nome','')).upper()
-    pdf.set_font("helvetica", "B", 14)
-    pdf.multi_cell(w_eff, 6, nome, 0, 'C')
+    pdf.set_font("helvetica", "B", 15)
+    pdf.multi_cell(0, 7, nome, 0, 'C')
     
-    # Scientifico (FIX ERRORE: w=w_eff invece di 0)
+    # Scientifico
     sci = pulisci(p.get('sci',''))
-    pdf.set_font("helvetica", "I", 8)
-    pdf.multi_cell(w_eff, 4, f"({sci})", 0, 'C')
+    pdf.set_font("helvetica", "I", 9)
+    pdf.multi_cell(0, 4, f"({sci})", 0, 'C')
     
     pdf.ln(1)
     # Dati Tecnici
     pdf.set_font("helvetica", "", 9)
-    pdf.cell(w_eff, 4, f"FAO {p.get('fao','')} - {p.get('metodo','')}", 0, 1, 'C')
-    pdf.cell(w_eff, 4, f"Scadenza: {p.get('scadenza','')}", 0, 1, 'C')
+    tracc = f"FAO {p.get('fao','')} - {p.get('metodo','')}"
+    pdf.cell(0, 5, tracc, 0, 1, 'C')
+    
+    # Scadenza
+    pdf.set_font("helvetica", "", 8)
+    pdf.cell(0, 4, f"Scadenza: {p.get('scadenza','')}", 0, 1, 'C')
 
     # Prezzo
     prezzo = str(p.get('prezzo', '')).strip()
     if prezzo:
-        pdf.set_y(34)
-        pdf.set_font("helvetica", "B", 13)
-        pdf.cell(w_eff, 6, f"EUR/Kg: {prezzo}", 0, 1, 'C')
+        pdf.set_y(35)
+        pdf.set_font("helvetica", "B", 14)
+        pdf.cell(0, 6, f"EUR/Kg: {prezzo}", 0, 1, 'C')
 
-    # Lotto
-    pdf.set_y(42)
+    # Lotto (Centrato sulla pagina)
+    pdf.set_y(43)
     pdf.set_font("helvetica", "B", 11)
-    pdf.set_x(14) # Centratura manuale per box lotto
+    # Calcolo per centrare il box lotto (Largo 75mm su foglio 100mm -> x = 12.5)
+    pdf.set_x(12.5) 
     lotto = pulisci(p.get('lotto',''))
-    pdf.cell(70, 9, f"LOTTO: {lotto}", 1, 0, 'C')
+    pdf.cell(75, 10, f"LOTTO: {lotto}", 1, 0, 'C')
     
-    # Conf
-    pdf.set_y(54)
+    # Conf (In basso a destra)
+    pdf.set_y(56)
     pdf.set_font("helvetica", "", 7)
-    pdf.cell(w_eff, 4, f"Conf: {p.get('conf','')}", 0, 0, 'R')
+    # Reset margine destro per sicurezza
+    pdf.set_right_margin(2)
+    pdf.cell(0, 4, f"Conf: {p.get('conf','')}", 0, 0, 'R')
 
 def genera_pdf_rullino(lista_p):
-    # Formato 62x100 mm Landscape
     pdf = FPDF('L', 'mm', (62, 100))
     pdf.set_auto_page_break(False)
     for p in lista_p:
@@ -174,30 +162,23 @@ def genera_pdf_singolo(p):
 c_title, c_logo = st.columns([5, 1])
 with c_title:
     st.title("FishLabel Dark")
-    st.caption("Gestione Etichette Professionale - Palermo")
 with c_logo:
     st.markdown("<h1>🐟</h1>", unsafe_allow_html=True)
 
-# Sidebar Semplificata
 with st.sidebar:
     st.header("Memoria")
     st.metric("Nomi Imparati", len(st.session_state.learned_map))
-    if st.button("🗑️ Reset Tutto"):
+    if st.button("🗑️ Reset Memoria"):
         st.session_state.clear()
         st.rerun()
 
-# AREA UPLOAD (Compatta)
-uploaded_file = st.file_uploader("Carica Fattura (PDF)", type="pdf", label_visibility="collapsed")
-
-if uploaded_file:
-    # Se nuovo file, resetta
-    if "last_f" not in st.session_state or st.session_state.last_f != uploaded_file.name:
-        st.session_state.prodotti = None
-        st.session_state.last_f = uploaded_file.name
-
-    # PULSANTE ANALIZZA (PICCOLO E COMPATTO)
-    if st.session_state.prodotti is None:
-        col_btn, col_void = st.columns([1, 5]) # Trucco per rendere il bottone piccolo a sinistra
+# --- GESTIONE STATO E UPLOAD ---
+# Se non ci sono prodotti, mostra l'uploader
+if not st.session_state.get("prodotti"):
+    uploaded_file = st.file_uploader("Carica Fattura (PDF)", type="pdf", label_visibility="collapsed")
+    
+    if uploaded_file:
+        col_btn, col_void = st.columns([1, 4])
         with col_btn:
             if st.button("🚀 Analizza PDF", type="primary"):
                 with st.spinner("Lettura in corso..."):
@@ -216,34 +197,36 @@ if uploaded_file:
                     st.session_state.prodotti = final
                     st.rerun()
 
-# RISULTATI
-if st.session_state.get("prodotti"):
-    st.divider()
-    
-    # Barra Azioni (Download Rullino)
-    col_res_1, col_res_2 = st.columns([2, 1])
-    with col_res_1:
-        st.subheader(f"Trovati {len(st.session_state.prodotti)} prodotti")
-    with col_res_2:
-        pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
-        st.download_button("🖨️ Scarica Rullino Completo", pdf_roll, "Rullino.pdf", "application/pdf", type="primary")
+# SE CI SONO PRODOTTI: MOSTRA RISULTATI E TASTO CHIUDI
+else:
+    # --- BARRA AZIONI SUPERIORE ---
+    c_info, c_close = st.columns([4, 1])
+    with c_info:
+        st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti Trovati")
+    with c_close:
+        # TASTO X PER CHIUDERE E RICARICARE
+        if st.button("❌ CHIUDI / NUOVA", type="secondary", use_container_width=True):
+            st.session_state.prodotti = None
+            st.rerun()
+            
+    # TASTO RULLINO
+    pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
+    st.download_button("🖨️ Scarica Rullino Completo (PDF)", pdf_roll, "Rullino.pdf", "application/pdf", type="primary", use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # LOOP PRODOTTI (CARD SCURE)
+    # LOOP PRODOTTI
     for i, p in enumerate(st.session_state.prodotti):
-        with st.container(border=True): # Bordo crea la "Card"
-            # Header Card
+        with st.container(border=True):
+            # Header: Nome e PDF Singolo
             c_h1, c_h2 = st.columns([3, 1])
             with c_h1:
-                # Nome Pesce Editabile ma stilizzato
                 p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
             with c_h2:
-                # Bottone scarica singolo allineato a destra
                 pdf_s = genera_pdf_singolo(p)
-                st.download_button("📄 PDF", pdf_s, f"{p['nome']}.pdf", key=f"dl_{i}")
+                st.download_button("📄 PDF Singolo", pdf_s, f"{p['nome']}.pdf", key=f"dl_{i}", use_container_width=True)
 
-            # Dati
+            # Campi Dati
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("<div class='label-text'>Nome Scientifico</div>", unsafe_allow_html=True)
@@ -252,7 +235,7 @@ if st.session_state.get("prodotti"):
                 st.markdown("<div class='label-text'>Lotto</div>", unsafe_allow_html=True)
                 p['lotto'] = st.text_input("lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
             with c3:
-                st.markdown("<div class='label-text'>Prezzo (€/Kg)</div>", unsafe_allow_html=True)
+                st.markdown("<div class='label-text'>Prezzo (€/Kg) [Opz.]</div>", unsafe_allow_html=True)
                 p['prezzo'] = st.text_input("prz", p.get('prezzo',''), key=f"pr_{i}", label_visibility="collapsed")
 
             c4, c5, c6 = st.columns(3)
@@ -266,6 +249,6 @@ if st.session_state.get("prodotti"):
                 st.markdown("<div class='label-text'>Confezionamento</div>", unsafe_allow_html=True)
                 p['conf'] = st.text_input("conf", p.get('conf',''), key=f"cf_{i}", label_visibility="collapsed")
 
-            # Logica Memoria
+            # Apprendimento
             if p['nome'] and p['sci']:
                 st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
