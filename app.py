@@ -6,33 +6,18 @@ import json
 import os
 import base64
 from datetime import datetime, timedelta
+import fitz  # È la libreria PyMuPDF che hai appena installato
 import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Ittica Catanzaro AI", page_icon="🐟", layout="wide")
 
-# --- CSS CUSTOM PER IL TASTO STAMPA ---
+# --- CSS per nascondere elementi inutili e stilizzare ---
 st.markdown("""
 <style>
-    /* Stile per il bottone di stampa diretto */
-    .print-btn {
-        background-color: #007bff;
-        color: white;
-        padding: 8px 16px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-weight: bold;
-        text-decoration: none;
-        display: inline-block;
-        font-family: "Source Sans Pro", sans-serif;
-    }
-    .print-btn:hover {
-        background-color: #0056b3;
-    }
-    /* Nascondi header Streamlit per pulizia */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    .block-container {padding-top: 1rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,6 +52,7 @@ def chiedi_a_gemini(testo_pdf):
         return []
     
     genai.configure(api_key=api_key)
+    # Usiamo il 2.5 Flash che è il tuo preferito/disponibile
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
     except:
@@ -105,12 +91,11 @@ def chiedi_a_gemini(testo_pdf):
             return lista_pulita
         else:
             return []
-            
     except Exception as e:
         st.error(f"Errore AI: {e}")
         return []
 
-# --- 4. MOTORE PDF ---
+# --- 4. MOTORE PDF & IMMAGINI ---
 def genera_pdf_bytes(p):
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
     pdf.add_page()
@@ -152,54 +137,46 @@ def genera_pdf_bytes(p):
     
     return bytes(pdf.output())
 
-# --- 5. FUNZIONE MAGICA JAVASCRIPT PER LA STAMPA ---
-def pulsante_stampa_js(pdf_bytes, key_id):
+def converti_pdf_in_immagine(pdf_bytes):
+    """Converte il PDF in PNG ad alta risoluzione per anteprima e stampa sicura."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = doc.load_page(0)  # Prendi la prima pagina
+    pix = page.get_pixmap(dpi=150) # 150 DPI è un buon compromesso qualità/velocità
+    return pix.tobytes("png")
+
+def bottone_stampa_immagine(img_bytes, key_id):
     """
-    Genera un bottone HTML che esegue JavaScript per stampare il PDF.
+    Crea un bottone che stampa l'IMMAGINE (non il PDF).
+    Le immagini non vengono bloccate dai browser!
     """
-    b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    b64_img = base64.b64encode(img_bytes).decode('utf-8')
     
-    # Questo script crea un "Blob" (oggetto file in memoria) e lo stampa
-    html_code = f"""
-    <html>
+    html = f"""
+    <div style="text-align: center; margin-top: 10px;">
+        <button onclick="stampaImmagine_{key_id}()" 
+            style="background-color: #007bff; color: white; border: none; padding: 10px 20px; 
+                   border-radius: 5px; font-weight: bold; cursor: pointer; width: 100%;">
+            🖨️ STAMPA SUBITO
+        </button>
+    </div>
     <script>
-    function printPDF_{key_id}() {{
-        const byteCharacters = atob("{b64_pdf}");
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {{
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        function stampaImmagine_{key_id}() {{
+            var win = window.open('', '_blank');
+            win.document.write('<html><head><title>Stampa Etichetta</title></head><body style="margin:0; display:flex; justify-content:center; align-items:center;">');
+            win.document.write('<img src="data:image/png;base64,{b64_img}" style="width:100%; max-width:600px;" onload="window.print(); window.close();"/>');
+            win.document.write('</body></html>');
+            win.document.close();
         }}
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], {{type: 'application/pdf'}});
-        const blobUrl = URL.createObjectURL(blob);
-        
-        // Apre il PDF in un iframe invisibile e stampa
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
-        iframe.src = blobUrl;
-        document.body.appendChild(iframe);
-        iframe.contentWindow.focus();
-        iframe.onload = function() {{
-            setTimeout(function() {{
-                iframe.contentWindow.print();
-            }}, 500);
-        }};
-    }}
     </script>
-    <body>
-        <button onclick="printPDF_{key_id}()" class="print-btn">🖨️ STAMPA SUBITO</button>
-    </body>
-    </html>
     """
-    # Renderizza il bottone HTML personalizzato
-    components.html(html_code, height=50)
+    components.html(html, height=60)
 
 
-# --- 6. INTERFACCIA ---
-st.title("⚓ FishLabel AI")
+# --- 5. INTERFACCIA ---
+st.title("⚓ FishLabel AI (No-Block Edition)")
 
 with st.sidebar:
-    st.header("⚙️ Gestione")
+    st.header("⚙️ Memoria")
     mem_json = json.dumps(st.session_state.learned_map, indent=4, ensure_ascii=False)
     st.download_button("💾 Scarica Memoria", mem_json, "memoria.json", "application/json")
     up = st.file_uploader("Carica Memoria", type="json")
@@ -217,7 +194,7 @@ if file:
         st.session_state.ultimo_f = file.name
 
     if st.button("🚀 ANALIZZA", type="primary"):
-        with st.spinner("Lettura in corso..."):
+        with st.spinner("Analisi in corso..."):
             reader = PdfReader(file)
             testo = " ".join([p.extract_text() for p in reader.pages])
             prodotti = chiedi_a_gemini(testo)
@@ -233,14 +210,13 @@ if file:
 
     if st.session_state.get("prodotti"):
         
-        # --- SEZIONE RULLINO (DISCRETA) ---
+        # --- RULLINO (DISCRETO) ---
         pdf_tot = FPDF(orientation='L', unit='mm', format=(62, 100))
         pdf_tot.set_margins(4, 3, 4)
         pdf_tot.set_auto_page_break(False)
         for p in st.session_state.prodotti:
             pdf_tot.add_page()
-            # (Codice disegno identico, omesso per brevità ma incluso nel loop reale)
-            # ... Ripete la logica di disegno per il PDF totale ...
+            # (Codice duplicato per brevità - usa la logica standard)
             pdf_tot.set_font("helvetica", "B", 8)
             pdf_tot.cell(w=pdf_tot.epw, h=4, text="ITTICA CATANZARO - PALERMO", align='C', ln=True)
             pdf_tot.ln(1)
@@ -263,9 +239,8 @@ if file:
             pdf_tot.set_font("helvetica", "", 7)
             pdf_tot.cell(w=pdf_tot.epw, h=4, text=f"Conf: {datetime.now().strftime('%d/%m/%Y')}", align='R')
 
-        # Bottone rullino normale (non primary)
-        st.download_button("📄 Scarica Rullino Completo (PDF)", bytes(pdf_tot.output()), "Rullino.pdf", "application/pdf")
-        
+        # Tasto download semplice, non invadente
+        st.download_button("📄 Scarica Rullino (PDF)", bytes(pdf_tot.output()), "Rullino.pdf", "application/pdf")
         st.divider()
 
         # --- LISTA PRODOTTI ---
@@ -276,29 +251,28 @@ if file:
                 with c1:
                     p['nome'] = st.text_input("Nome", p.get('nome', ''), key=f"n_{i}")
                     p['sci'] = st.text_input("Sci", p.get('sci', ''), key=f"s_{i}")
-                    # Memoria rapida
                     if p['nome'] and p['sci']:
                          st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
 
                 with c2:
                     p['fao'] = st.text_input("FAO", p.get('fao', ''), key=f"f_{i}")
-                    idx_met = 0 if "PESCATO" in p.get('metodo', 'PESCATO').upper() else 1
-                    p['metodo'] = st.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=idx_met, key=f"m_{i}")
+                    idx = 0 if "PESCATO" in p.get('metodo', 'PESCATO').upper() else 1
+                    p['metodo'] = st.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=idx, key=f"m_{i}")
                     p['lotto'] = st.text_input("Lotto", p.get('lotto', ''), key=f"l_{i}")
 
                 with c3:
                     p['scadenza'] = st.text_input("Scadenza", p.get('scadenza', ''), key=f"sc_{i}")
                     
-                    # Genera bytes
+                    # 1. Genera PDF
                     pdf_bytes = genera_pdf_bytes(p)
                     
-                    st.write("") # Spazio
-                    # --- IL PULSANTE DI STAMPA DIRETTA ---
-                    pulsante_stampa_js(pdf_bytes, f"btn_{i}")
+                    # 2. Converti in IMMAGINE (PNG)
+                    img_bytes = converti_pdf_in_immagine(pdf_bytes)
                     
-                    # Anteprima piccola
-                    b64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                    # Usiamo embed che è più stabile di iframe per i pdf su Chrome
-                    st.markdown(f'<embed src="data:application/pdf;base64,{b64}#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf" width="100%" height="150" style="border:1px solid #ddd;">', unsafe_allow_html=True)
-            
+                    # 3. Mostra ANTEPRIMA (Immagine = No Schermo Nero)
+                    st.image(img_bytes, caption="Anteprima", use_container_width=True)
+                    
+                    # 4. Tasto STAMPA JAVASCRIPT
+                    bottone_stampa_immagine(img_bytes, f"btn_{i}")
+
             st.markdown("---")
