@@ -22,6 +22,7 @@ STOPWORDS = {
     "BUSTA", "SOTTOVUOTO", "FRES", "CONG"
 }
 
+# Filtri anti-header/indirizzi
 HEADER_NOISE = [
     "PALERMO", "VIA", "CORSO", "PIAZZA", "P.IVA", "PARTITA IVA", "CODICE FISCALE",
     "FATTURA", "DDT", "DOCUMENTO", "CLIENTE", "DESTINAZIONE",
@@ -29,6 +30,12 @@ HEADER_NOISE = [
     "AGENZIA", "ENTRATE", "FATTURE E CORRISPETTIVI", "TERMINI DI PAGAMENTO",
     "IMPONIBILE", "IMPOSTA", "TOTALE", "SCADENZE", "PEC", "SPETTABILE"
 ]
+
+# Se in whitelist trovi roba geografica tipo "ATLANTICO", qui la blocchi a prescindere
+BLACKLIST_NOMI = {
+    "ATLANTICO", "OCEANO ATLANTICO", "MEDITERRANEO", "OCEANO", "MARE",
+    "MAR ADRIATICO", "TIRRENO", "IONIO"
+}
 
 # ----------------------------------
 # PDF TEXT
@@ -50,7 +57,7 @@ def estrai_testo_pdf(file_like):
     return testo
 
 # ----------------------------------
-# NOME: PULIZIA (solo come fallback)
+# NOME: PULIZIA (fallback)
 # ----------------------------------
 
 def pulisci_nome_chirurgico(testo: str) -> str:
@@ -87,6 +94,8 @@ def load_whitelist_from_json_bytes(raw: bytes) -> set[str]:
         # evita voci troppo corte tipo "IN"
         if len(s) < 4 and " " not in s:
             continue
+        if s in BLACKLIST_NOMI:
+            continue
         wl.add(s)
     return wl
 
@@ -94,7 +103,7 @@ def build_whitelist_regex(whitelist: set[str]) -> re.Pattern:
     if not whitelist:
         return re.compile(r"(?!)")
 
-    ordered = sorted(whitelist, key=len, reverse=True)
+    ordered = sorted(whitelist, key=len, reverse=True)  # prima i più lunghi
     parts = [re.escape(x) for x in ordered]
     pattern = r"\b(?:%s)\b" % "|".join(parts)
     return re.compile(pattern, flags=re.IGNORECASE | re.UNICODE)
@@ -103,7 +112,12 @@ def find_name_from_whitelist(text: str, wl_regex: re.Pattern) -> str:
     if not text:
         return ""
     m = wl_regex.search(text.upper())
-    return m.group(0).upper().strip() if m else ""
+    if not m:
+        return ""
+    val = m.group(0).upper().strip()
+    if val in BLACKLIST_NOMI:
+        return ""
+    return val
 
 # ----------------------------------
 # LOTTO / SCIENTIFICO / FAO / METODO
@@ -174,7 +188,7 @@ def estrai_dati_da_blocchi_codici(testo: str, wl_regex: re.Pattern) -> list[dict
     for blocco in blocchi:
         b_up = blocco.upper()
 
-        # Nome: cerca nel blocco intero usando whitelist (vincente)
+        # Nome: cerca nel blocco intero usando whitelist
         nome = find_name_from_whitelist(blocco, wl_regex)
 
         # fallback: pulisci prima riga
@@ -195,15 +209,20 @@ def estrai_dati_da_blocchi_codici(testo: str, wl_regex: re.Pattern) -> list[dict
     return risultati
 
 # ----------------------------------
-# STRATEGIA B: FATTURE SENZA CODICI (TABELLARE) - FIX LOTTI CON SPAZI
+# STRATEGIA B: FATTURE SENZA CODICI (TABELLARE) - FIX "ATLANTICO"
 # ----------------------------------
 
 def estrai_dati_tabella_senza_codici(testo: str, wl_regex: re.Pattern) -> list[dict]:
+    """
+    - Cerca righe con LOTTO
+    - Estrae lotto anche se ha spazi tipo "K 33/A"
+    - Trova la "riga principale prodotto" (quella con scientifico tra parentesi oppure sopra 'PRODOTTO DELLA PESCA')
+      e cerca il nome SOLO lì, così non prende 'ATLANTICO'
+    """
     lines = [ln.strip() for ln in (testo or "").splitlines() if ln.strip()]
     results = []
 
-    def extract_lotto_from_line(line_up: str) -> str:
-        # cattura anche lotti con spazio tipo "K 33/A"
+    def extract_lotto(line_up: str) -> str:
         m = re.search(
             r"LOTTO\s*(?:N\.?|N°)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-_\. ]{1,25})",
             line_up
@@ -220,33 +239,35 @@ def estrai_dati_tabella_senza_codici(testo: str, wl_regex: re.Pattern) -> list[d
         if "LOTTO" not in up:
             continue
 
-        lotto = extract_lotto_from_line(up)
+        lotto = extract_lotto(up)
         if not lotto:
             continue
 
-        # cerca nome nelle righe sopra (finestra ampia)
-        nome = ""
-        for j in range(i, max(-1, i - 8), -1):
+        # 1) riga principale prodotto
+        main_line = ""
+        for j in range(i - 1, -1, -1):
             cand = lines[j]
             cand_up = cand.upper()
-            if any(x in cand_up for x in HEADER_NOISE):
-                continue
-            nome = find_name_from_whitelist(cand, wl_regex)
-            if nome:
+
+            # se c'è scientifico tra parentesi -> riga giusta
+            if "(" in cand and ")" in cand:
+                main_line = cand
                 break
 
-        # se non trovato sopra, prova sotto
-        if not nome:
-            for j in range(i + 1, min(len(lines), i + 6)):
-                cand = lines[j]
-                cand_up = cand.upper()
-                if any(x in cand_up for x in HEADER_NOISE):
-                    continue
-                nome = find_name_from_whitelist(cand, wl_regex)
-                if nome:
-                    break
+            # se trovi "PRODOTTO DELLA PESCA", la riga sopra è la descrizione
+            if "PRODOTTO DELLA PESCA" in cand_up and j > 0:
+                main_line = lines[j - 1]
+                break
 
-        # finestra attorno per scientifico/FAO/metodo
+        if not main_line:
+            main_line = lines[i - 1] if i > 0 else ""
+
+        # 2) nome solo da main_line
+        nome = find_name_from_whitelist(main_line, wl_regex)
+        if not nome:
+            nome = pulisci_nome_chirurgico(main_line)
+
+        # 3) scientifico/FAO/metodo attorno al lotto
         around = " ".join(lines[max(0, i - 6): min(len(lines), i + 6)])
         around_up = around.upper()
 
@@ -254,10 +275,13 @@ def estrai_dati_tabella_senza_codici(testo: str, wl_regex: re.Pattern) -> list[d
         fao = estrai_fao(around_up)
         metodo = estrai_metodo(around_up)
 
-        if not nome:
-            nome = "DA COMPILARE"
-
-        results.append({"nome": nome, "sci": sci, "lotto": lotto, "fao": fao, "metodo": metodo})
+        results.append({
+            "nome": nome if nome else "DA COMPILARE",
+            "sci": sci,
+            "lotto": lotto,
+            "fao": fao,
+            "metodo": metodo
+        })
 
     # dedup per lotto
     seen = set()
