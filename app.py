@@ -64,55 +64,51 @@ def chiedi_a_gemini(testo_pdf, model_name):
     try:
         model = genai.GenerativeModel(model_name)
         prompt = f"""
-        Analizza fattura ittica ed estrai JSON array.
-        REGOLE:
+        Analizza fattura ed estrai JSON array. REGOLE RIGIDE:
         1. "nome": Nome commerciale.
-        2. "sci": Nome scientifico (E' OBBLIGATORIO).
+        2. "sci": Nome scientifico (sempre necessario).
         3. "lotto": Codice lotto.
         4. "metodo": "PESCATO" o "ALLEVATO".
-        5. "zona": Zona FAO (es. 37.2.1).
+        5. "zona": Zona FAO (es. 37.2.1) o nazione allevamento.
         6. "origine": Nazionalità (es. ITALIA).
-        7. "attrezzo": Tipo di attrezzo (es. Reti da traino). Se incerto scrivi "Sconosciuto".
+        7. "attrezzo": Uno tra {LISTA_ATTREZZI}. Se incerto "Sconosciuto".
         8. "conf": Data confezionamento (GG/MM/AAAA).
-        
-        IMPORTANTE: Non inserire commenti tipo "(inferito da AI)".
-        Testo: {testo_pdf}
+        No commenti extra. Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA UNIFICATO (FIX ALLINEAMENTO) ---
+# --- 3. MOTORE DI STAMPA UNIFICATO (IL CUORE DEL FIX) ---
 def pulisci(t):
     if not t: return ""
     t = re.sub(r'\(.*?\)', '', str(t))
     return t.replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
 
 def disegna_su_pdf(pdf, p):
-    """Funzione unica per disegnare l'etichetta a norma UE."""
     pdf.add_page()
     pdf.set_margins(4, 3, 4)
-    w_full = 92 # Larghezza di scrittura sicura su 100mm
+    w_full = 92
     
-    # Intestazione Negozio
+    # 1. Intestazione
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.ln(1)
     
-    # Nome Commerciale (Grande e Centrale)
+    # 2. Nome Commerciale
     nome = pulisci(p.get('nome','')).upper()
     pdf.set_font("helvetica", "B", 15)
     pdf.multi_cell(w_full, 7, nome, 0, 'C')
     
-    # Nome Scientifico (Corsivo, Obbligatorio)
+    # 3. Nome Scientifico (SOTTO IL NOME)
     sci = pulisci(p.get('sci',''))
     pdf.set_font("helvetica", "I", 9)
     pdf.multi_cell(w_full, 5, f"({sci})", 0, 'C')
     
     pdf.ln(2)
     
-    # Dati Tecnici
+    # 4. Metodo, Attrezzo, Zona e Nazione
     pdf.set_font("helvetica", "", 9)
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci(p.get('zona', ''))
@@ -123,45 +119,39 @@ def disegna_su_pdf(pdf, p):
         pdf.multi_cell(w_full, 5, f"ALLEVATO IN: {origine.upper()}", 0, 'C')
         pdf.multi_cell(w_full, 5, f"ZONA: {zona.upper()}", 0, 'C')
     else:
-        # PESCATO CON [ATTREZZO] - Se 'Sconosciuto' non scrive nulla
-        attr_clean = f" CON {attrezzo.upper()}" if attrezzo and attrezzo.upper() != "SCONOSCIUTO" else ""
+        # Pescato: evita "CON SCONOSCIUTO"
+        attr_txt = f" CON {attrezzo.upper()}" if attrezzo and attrezzo.upper() != "SCONOSCIUTO" else ""
         pdf.set_font("helvetica", "B", 9)
-        pdf.multi_cell(w_full, 5, f"PESCATO{attr_clean}", 0, 'C')
+        pdf.multi_cell(w_full, 5, f"PESCATO{attr_txt}", 0, 'C')
         
-        # ZONA + NAZIONE (Esempio: FAO 37.2.1 - ITALIA)
+        # Zona FAO + Nazionalità uniti
         pdf.set_font("helvetica", "", 9)
         naz_text = f" - {origine.upper()}" if origine else ""
         pdf.multi_cell(w_full, 5, f"ZONA: {zona.upper()}{naz_text}", 0, 'C')
     
     pdf.cell(w_full, 5, "PRODOTTO FRESCO", 0, 1, 'C')
 
-    # Prezzo (Se presente)
+    # 5. Prezzo (Se presente)
     if str(p.get('prezzo', '')).strip():
         pdf.set_y(38)
         pdf.set_font("helvetica", "B", 14)
         pdf.cell(w_full, 6, f"EUR/Kg: {p.get('prezzo','')}", 0, 1, 'C')
 
-    # Lotto (Inquadrato al centro)
+    # 6. Lotto (Box Fisso)
     pdf.set_y(46)
     pdf.set_font("helvetica", "B", 11)
-    pdf.set_x(12.5) # Centra il box da 75mm su 100mm
+    pdf.set_x(12.5)
     pdf.cell(75, 9, f"LOTTO: {pulisci(p.get('lotto',''))}", 1, 0, 'C')
     
-    # Footer: Date
+    # 7. Date
     pdf.set_y(56)
     pdf.set_font("helvetica", "", 7)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
 
-def genera_pdf_rullino(lista_p):
+def genera_pdf_bytes(lista_p):
     pdf = FPDF('L', 'mm', (62, 100))
     pdf.set_auto_page_break(False)
     for p in lista_p: disegna_su_pdf(pdf, p)
-    return bytes(pdf.output())
-
-def genera_pdf_singolo(p):
-    pdf = FPDF('L', 'mm', (62, 100))
-    pdf.set_auto_page_break(False)
-    disegna_su_pdf(pdf, p)
     return bytes(pdf.output())
 
 def converti_pdf_in_immagine(pdf_bytes):
@@ -179,9 +169,9 @@ with col_m:
 if not st.session_state.get("prodotti"):
     col_up, _ = st.columns([1, 2])
     with col_up:
-        file = st.file_uploader("Carica Fattura PDF", type="pdf", label_visibility="collapsed")
+        file = st.file_uploader("Fattura PDF", type="pdf", label_visibility="collapsed")
         if file and st.button("🚀 Analizza PDF", type="primary"):
-            with st.spinner("Estrazione dati a norma UE..."):
+            with st.spinner("Analisi dati..."):
                 reader = PdfReader(file)
                 text = " ".join([p.extract_text() for p in reader.pages])
                 res = chiedi_a_gemini(text, c_modello)
@@ -196,9 +186,8 @@ if not st.session_state.get("prodotti"):
 else:
     c_inf, c_cl = st.columns([5, 1])
     with c_inf:
-        st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti Trovati")
-        # TASTO RULLINO (ROSSO)
-        st.download_button("🖨️ SCARICA RULLINO", genera_pdf_rullino(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
+        st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti")
+        st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
     with c_cl:
         if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
 
@@ -207,16 +196,15 @@ else:
             # Singolo PDF
             c_h1, c_h2 = st.columns([4, 1])
             with c_h1: p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
-            with c_h2: st.download_button("⬇️ PDF", genera_pdf_singolo(p), f"{p['nome']}.pdf", key=f"dl_{i}")
+            with c_h2: st.download_button("⬇️ PDF", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_{i}")
 
-            # Form Dati
             c1, c2, c3 = st.columns(3)
             p['sci'] = c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
             p['lotto'] = c2.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
             p['metodo'] = c3.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
 
             c4, c5, c6 = st.columns(3)
-            p['zona'] = c4.text_input("Zona (FAO)", p.get('zona',''), key=f"z_{i}")
+            p['zona'] = c4.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
             p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
             if p['metodo'] == "PESCATO":
                 a_curr = p.get('attrezzo', '')
@@ -230,8 +218,8 @@ else:
             p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
             p['conf'] = c9.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
 
-            # ANTEPRIMA (Identica alla stampa)
-            st.image(converti_pdf_in_immagine(genera_pdf_singolo(p)), width=380)
+            # ANTEPRIMA (Identica alla stampa rullino)
+            st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=380)
 
             if p['nome'] and p['sci']: st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
 
