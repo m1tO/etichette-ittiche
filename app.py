@@ -17,8 +17,6 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .block-container {padding-top: 1rem;}
-    /* Nascondi il bordo delle immagini se necessario */
-    img {border: 1px solid #ddd; border-radius: 4px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,11 +95,14 @@ def chiedi_a_gemini(testo_pdf):
 
 # --- 4. MOTORE PDF ---
 def pulisci_testo(testo):
-    """Rimuove caratteri che rompono il PDF (come il simbolo Euro)."""
+    """Evita errori di codifica nel PDF rimpiazzando simboli problematici."""
     if not testo: return ""
-    return str(testo).replace("€", "EUR").encode('latin-1', 'replace').decode('latin-1')
+    # Rimpiazza l'Euro con EUR e pulisce caratteri speciali per latin-1
+    t = str(testo).replace("€", "EUR")
+    return t.encode('latin-1', 'replace').decode('latin-1')
 
 def disegna_su_pdf(pdf, p):
+    """Funzione condivisa per disegnare l'etichetta (62x100mm)."""
     pdf.add_page()
     pdf.set_auto_page_break(False)
     
@@ -110,7 +111,7 @@ def disegna_su_pdf(pdf, p):
     pdf.cell(w=pdf.epw, h=4, text="ITTICA CATANZARO - PALERMO", align='C', ln=True)
     pdf.ln(1)
     
-    # Nome
+    # Nome Pesce (Grande)
     nome = pulisci_testo(p.get('nome','')).upper()
     pdf.set_font("helvetica", "B", 15)
     pdf.multi_cell(w=pdf.epw, h=7, text=nome, align='C')
@@ -134,29 +135,32 @@ def disegna_su_pdf(pdf, p):
     scad = pulisci_testo(p.get('scadenza',''))
     pdf.cell(w=pdf.epw, h=4, text=f"Scadenza: {scad}", align='C', ln=True)
 
-    # --- ZONA PREZZO (CORRETTA) ---
+    # --- POSIZIONI FISSE PER EVITARE SOVRAPPOSIZIONI ---
+    
+    # Prezzo (Se presente)
     prezzo = str(p.get('prezzo', '')).strip()
     if prezzo:
-        pdf.set_y(32)
+        pdf.set_y(35) # Leggermente più basso rispetto a prima
         pdf.set_font("helvetica", "B", 14)
-        # HO TOLTO IL SIMBOLO € QUI SOTTO PER EVITARE IL CRASH
         pdf.cell(w=pdf.epw, h=6, text=f"Euro/Kg: {prezzo}", align='C', ln=True)
 
     # Lotto
-    pdf.set_y(40)
+    pdf.set_y(43) # Spostato giù per non toccare il prezzo
     pdf.set_font("helvetica", "B", 11)
-    pdf.set_x((100 - 70) / 2)
+    pdf.set_x((100 - 75) / 2) # Centrato
     lotto = pulisci_testo(p.get('lotto',''))
-    pdf.cell(w=70, h=9, text=f"LOTTO: {lotto}", border=1, align='C')
+    pdf.cell(w=75, h=10, text=f"LOTTO: {lotto}", border=1, align='C')
     
     # Data Confezionamento
-    pdf.set_y(54)
+    pdf.set_y(56) # In fondo a destra
     pdf.set_font("helvetica", "", 7)
     conf = pulisci_testo(p.get('conf',''))
     pdf.cell(w=pdf.epw, h=4, text=f"Conf: {conf}", align='R')
 
 def genera_pdf_bytes(p):
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
+    # SET MARGINS: Cruciale per far corrispondere anteprima e rullino!
+    pdf.set_margins(4, 3, 4) 
     disegna_su_pdf(pdf, p)
     return bytes(pdf.output())
 
@@ -191,7 +195,7 @@ def bottone_stampa_immagine(img_bytes, key_id):
     components.html(html, height=60)
 
 # --- 5. INTERFACCIA ---
-st.title("⚓ FishLabel AI PRO")
+st.title("⚓ FishLabel AI PRO (Fix Layout)")
 
 with st.sidebar:
     st.header("⚙️ Memoria")
@@ -211,7 +215,7 @@ if file:
         st.session_state.ultimo_f = file.name
 
     if st.button("🚀 ANALIZZA FATTURA", type="primary"):
-        with st.spinner("Analisi in corso..."):
+        with st.spinner("L'AI sta leggendo..."):
             reader = PdfReader(file)
             testo = " ".join([p.extract_text() for p in reader.pages])
             prodotti = chiedi_a_gemini(testo)
@@ -226,14 +230,17 @@ if file:
                 st.session_state.prodotti = prodotti
 
     if st.session_state.get("prodotti"):
+        # --- RULLINO PDF (ORA IDENTICO ALL'ANTEPRIMA) ---
         pdf_tot = FPDF(orientation='L', unit='mm', format=(62, 100))
-        pdf_tot.set_margins(4, 3, 4)
+        pdf_tot.set_margins(4, 3, 4) # Margini uguali per tutti
         for p in st.session_state.prodotti:
             disegna_su_pdf(pdf_tot, p)
+        
         st.download_button("📄 Scarica Rullino PDF", bytes(pdf_tot.output()), "Rullino.pdf", "application/pdf")
         
         st.divider()
 
+        # --- LISTA EDITABILE ---
         for i, p in enumerate(st.session_state.prodotti):
             with st.container():
                 c1, c2, c3 = st.columns([1, 1, 1])
@@ -245,14 +252,14 @@ if file:
                 with c2:
                     p['fao'] = st.text_input("FAO", p.get('fao', ''), key=f"f_{i}")
                     p['lotto'] = st.text_input("Lotto", p.get('lotto', ''), key=f"l_{i}")
-                    # INPUT PREZZO
-                    p['prezzo'] = st.text_input("Prezzo (€/Kg)", p.get('prezzo', ''), placeholder="es: 25.00", key=f"pr_{i}")
+                    p['prezzo'] = st.text_input("Prezzo (€/Kg)", p.get('prezzo', ''), placeholder="es: 25.50", key=f"pr_{i}")
                 with c3:
                     p['scadenza'] = st.text_input("Scadenza", p.get('scadenza', ''), key=f"sc_{i}")
                     p['conf'] = st.text_input("Confezionamento", p.get('conf', ''), key=f"cf_{i}")
                     
+                    # Generazione sicura
                     pdf_bytes = genera_pdf_bytes(p)
                     img_bytes = converti_pdf_in_immagine(pdf_bytes)
                     bottone_stampa_immagine(img_bytes, f"btn_{i}")
-                    st.image(img_bytes, width=250)
+                    st.image(img_bytes, width=280) # Anteprima fedele
             st.markdown("---")
