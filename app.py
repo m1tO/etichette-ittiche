@@ -7,11 +7,11 @@ import os
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURAZIONE E TEMA ---
-st.set_page_config(page_title="FishLabel IA Pro", page_icon="🐟", layout="wide")
+st.set_page_config(page_title="FishLabel AI Pro", page_icon="⚓", layout="wide")
 
 st.markdown("""
 <style>
-    /* Tema Dark e Pulizia */
+    /* Tema Dark */
     .stApp { background-color: #0e1117; color: #fafafa; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -40,16 +40,9 @@ st.markdown("""
         border: none;
     }
     
-    /* Uploader più carino */
-    div[data-testid="stFileUploader"] {
-        padding-top: 0px;
-    }
-    
     /* Titoli */
-    h1, h2, h3 { color: #4facfe; }
-    .fish-name { font-size: 1.4rem; font-weight: bold; color: #4facfe; margin-bottom: 5px; }
+    h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
     .label-text { font-size: 0.8rem; color: #aaa; }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,49 +90,40 @@ def pulisci(t):
 def disegna_su_pdf(pdf, p):
     pdf.add_page()
     pdf.set_margins(2, 3, 2)
+    w_full = 96 
     
-    w_full = 96 # Larghezza utile
-    
-    # Intestazione
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.ln(1)
     
-    # Nome (Grande)
     nome = pulisci(p.get('nome','')).upper()
     pdf.set_font("helvetica", "B", 15)
     pdf.multi_cell(w_full, 7, nome, 0, 'C')
     
-    # Scientifico
     sci = pulisci(p.get('sci',''))
     pdf.set_font("helvetica", "I", 9)
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
     pdf.ln(1)
-    # Dati Tecnici
     pdf.set_font("helvetica", "", 9)
     tracc = f"FAO {pulisci(p.get('fao',''))} - {pulisci(p.get('metodo',''))}"
     pdf.cell(w_full, 5, tracc, 0, 1, 'C')
     
-    # Scadenza
     pdf.set_font("helvetica", "", 8)
     pdf.cell(w_full, 4, f"Scadenza: {pulisci(p.get('scadenza',''))}", 0, 1, 'C')
 
-    # Prezzo
     prezzo = str(p.get('prezzo', '')).strip()
     if prezzo:
         pdf.set_y(35)
         pdf.set_font("helvetica", "B", 14)
         pdf.cell(w_full, 6, f"EUR/Kg: {prezzo}", 0, 1, 'C')
 
-    # Lotto (Centrato)
     pdf.set_y(43)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_x(12.5) 
     lotto = pulisci(p.get('lotto',''))
     pdf.cell(75, 10, f"LOTTO: {lotto}", 1, 0, 'C')
     
-    # Conf (In basso a destra)
     pdf.set_y(56)
     pdf.set_font("helvetica", "", 7)
     pdf.set_right_margin(2)
@@ -161,31 +145,27 @@ def genera_pdf_singolo(p):
 # --- 4. INTERFACCIA UTENTE ---
 c_title, c_logo = st.columns([5, 1])
 with c_title:
-    st.title("FishLabel Dark")
+    st.title("⚓ FishLabel AI Pro") # <<< NOME AGGIORNATO
 with c_logo:
-    st.markdown("<h1>🐟</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: right;'>🐟</h1>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Memoria")
-    st.metric("Nomi Imparati", len(st.session_state.learned_map))
+    st.metric("Nomi Salvati", len(st.session_state.learned_map))
     if st.button("🗑️ Reset Memoria"):
         st.session_state.clear()
         st.rerun()
 
 # --- GESTIONE STATO ---
 if not st.session_state.get("prodotti"):
-    
-    # >>> QUI È LA MAGIA: COLONNE PER STRINGERE L'UPLOADER <<<
-    col_upload, col_empty = st.columns([1, 2]) # 1 parte occupata, 2 parti vuote
-    
+    col_upload, _ = st.columns([1, 2])
     with col_upload:
         st.markdown("### Carica Fattura")
-        uploaded_file = st.file_uploader("Trascina qui il PDF", type="pdf", label_visibility="collapsed")
+        uploaded_file = st.file_uploader("PDF", type="pdf", label_visibility="collapsed")
         
         if uploaded_file:
-            st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🚀 Analizza PDF", type="primary"):
-                with st.spinner("Lettura in corso..."):
+                with st.spinner("Analisi in corso..."):
                     reader = PdfReader(uploaded_file)
                     text = " ".join([p.extract_text() for p in reader.pages])
                     res = chiedi_a_gemini(text)
@@ -202,11 +182,9 @@ if not st.session_state.get("prodotti"):
                     st.rerun()
 
 else:
-    # --- BARRA AZIONI SUPERIORE ---
     c_info, c_close = st.columns([5, 1])
     with c_info:
         st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti Trovati")
-        # TASTO RULLINO COMPATTO (allineato a sinistra)
         col_rullino, _ = st.columns([1, 4])
         with col_rullino:
             pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
@@ -219,10 +197,8 @@ else:
             
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # LOOP PRODOTTI
     for i, p in enumerate(st.session_state.prodotti):
         with st.container(border=True):
-            # Header
             c_h1, c_h2 = st.columns([4, 1])
             with c_h1:
                 p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
@@ -230,16 +206,15 @@ else:
                 pdf_s = genera_pdf_singolo(p)
                 st.download_button("⬇️ PDF", pdf_s, f"{p['nome']}.pdf", key=f"dl_{i}")
 
-            # Campi
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.markdown("<div class='label-text'>Nome Scientifico</div>", unsafe_allow_html=True)
+                st.markdown("<div class='label-text'>Scientifico</div>", unsafe_allow_html=True)
                 p['sci'] = st.text_input("sci", p.get('sci',''), key=f"s_{i}", label_visibility="collapsed")
             with c2:
                 st.markdown("<div class='label-text'>Lotto</div>", unsafe_allow_html=True)
                 p['lotto'] = st.text_input("lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
             with c3:
-                st.markdown("<div class='label-text'>Prezzo (€/Kg) [Opz.]</div>", unsafe_allow_html=True)
+                st.markdown("<div class='label-text'>Prezzo (€/Kg)</div>", unsafe_allow_html=True)
                 p['prezzo'] = st.text_input("prz", p.get('prezzo',''), key=f"pr_{i}", label_visibility="collapsed")
 
             c4, c5, c6 = st.columns(3)
@@ -253,7 +228,6 @@ else:
                 st.markdown("<div class='label-text'>Confezionamento</div>", unsafe_allow_html=True)
                 p['conf'] = st.text_input("conf", p.get('conf',''), key=f"cf_{i}", label_visibility="collapsed")
 
-            # Apprendimento
             if p['nome'] and p['sci']:
                 st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
     
