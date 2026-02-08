@@ -40,6 +40,11 @@ st.markdown("""
         border: none;
     }
     
+    /* Uploader più carino */
+    div[data-testid="stFileUploader"] {
+        padding-top: 0px;
+    }
+    
     /* Titoli */
     h1, h2, h3 { color: #4facfe; }
     .fish-name { font-size: 1.4rem; font-weight: bold; color: #4facfe; margin-bottom: 5px; }
@@ -93,7 +98,7 @@ def disegna_su_pdf(pdf, p):
     pdf.add_page()
     pdf.set_margins(2, 3, 2)
     
-    w_full = 96 # Larghezza utile (100mm - 2mm - 2mm)
+    w_full = 96 # Larghezza utile
     
     # Intestazione
     pdf.set_font("helvetica", "B", 8)
@@ -130,7 +135,7 @@ def disegna_su_pdf(pdf, p):
     # Lotto (Centrato)
     pdf.set_y(43)
     pdf.set_font("helvetica", "B", 11)
-    pdf.set_x(12.5) # Centratura manuale per box da 75mm su foglio 100mm
+    pdf.set_x(12.5) 
     lotto = pulisci(p.get('lotto',''))
     pdf.cell(75, 10, f"LOTTO: {lotto}", 1, 0, 'C')
     
@@ -169,11 +174,16 @@ with st.sidebar:
 
 # --- GESTIONE STATO ---
 if not st.session_state.get("prodotti"):
-    uploaded_file = st.file_uploader("Carica Fattura (PDF)", type="pdf", label_visibility="collapsed")
     
-    if uploaded_file:
-        col_btn, col_void = st.columns([1, 4])
-        with col_btn:
+    # >>> QUI È LA MAGIA: COLONNE PER STRINGERE L'UPLOADER <<<
+    col_upload, col_empty = st.columns([1, 2]) # 1 parte occupata, 2 parti vuote
+    
+    with col_upload:
+        st.markdown("### Carica Fattura")
+        uploaded_file = st.file_uploader("Trascina qui il PDF", type="pdf", label_visibility="collapsed")
+        
+        if uploaded_file:
+            st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🚀 Analizza PDF", type="primary"):
                 with st.spinner("Lettura in corso..."):
                     reader = PdfReader(uploaded_file)
@@ -196,9 +206,11 @@ else:
     c_info, c_close = st.columns([5, 1])
     with c_info:
         st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti Trovati")
-        # TASTO RULLINO COMPATTO (senza use_container_width=True)
-        pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
-        st.download_button("🖨️ Scarica Rullino (PDF)", pdf_roll, "Rullino.pdf", "application/pdf", type="primary")
+        # TASTO RULLINO COMPATTO (allineato a sinistra)
+        col_rullino, _ = st.columns([1, 4])
+        with col_rullino:
+            pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
+            st.download_button("🖨️ Scarica Rullino (PDF)", pdf_roll, "Rullino.pdf", "application/pdf", type="primary")
 
     with c_close:
         if st.button("❌ CHIUDI", type="secondary"):
@@ -215,7 +227,6 @@ else:
             with c_h1:
                 p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
             with c_h2:
-                # Tasto Download Singolo (piccolo)
                 pdf_s = genera_pdf_singolo(p)
                 st.download_button("⬇️ PDF", pdf_s, f"{p['nome']}.pdf", key=f"dl_{i}")
 
