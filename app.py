@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURAZIONE E TEMA ---
-st.set_page_config(page_title="FishLabel Dark", page_icon="🐟", layout="wide")
+st.set_page_config(page_title="FishLabel IA Pro", page_icon="🐟", layout="wide")
 
 st.markdown("""
 <style>
