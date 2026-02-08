@@ -9,20 +9,20 @@ from datetime import datetime, timedelta
 import fitz  # PyMuPDF
 import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAZIONE E STILE ---
+# --- 1. CONFIGURAZIONE E TEMA ---
 st.set_page_config(page_title="FishLabel AI Pro", page_icon="⚓", layout="wide")
+
+# SELETTORE MODELLI RICHIESTI
+MODELLI_AI = {
+    "⚡ Gemini 2.5 Flash (Default)": "gemini-2.5-flash",
+    "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite",
+    "🔥 Gemini 3 Flash": "gemini-3-flash"
+}
 
 LISTA_ATTREZZI = [
     "Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari",
     "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"
 ]
-
-# LISTA MODELLI DISPONIBILI (Strategia Anti-Blocco)
-MODELLI_AI = {
-    "⚡ Gemini 2.0 Flash (Nuovo)": "gemini-2.0-flash-exp",
-    "🚀 Gemini 1.5 Flash (Veloce)": "gemini-1.5-flash",
-    "🧠 Gemini 1.5 Pro (Intelligente)": "gemini-1.5-pro"
-}
 
 st.markdown("""
 <style>
@@ -33,6 +33,8 @@ st.markdown("""
     input[type="text"] { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
     .label-text { font-size: 0.8rem; color: #aaa; margin-bottom: 2px; }
+    
+    /* BOTTONE RULLINO ROSSO E COMPATTO */
     div.stDownloadButton > button {
         background-color: #FF4B4B !important; color: white !important; font-size: 18px !important;
         padding: 0.8rem 2rem !important; border: none !important; border-radius: 8px !important;
@@ -59,34 +61,26 @@ if "learned_map" not in st.session_state: st.session_state.learned_map = carica_
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
-# NUOVA FUNZIONE CON SELETTORE MODELLO
 def chiedi_a_gemini(testo_pdf, model_name):
     if not api_key: return []
     genai.configure(api_key=api_key)
-    
-    # Usa il modello scelto dall'utente
     try:
         model = genai.GenerativeModel(model_name)
-    except Exception as e:
-        st.error(f"Modello {model_name} non disponibile, provo il fallback...")
-        model = genai.GenerativeModel('gemini-1.5-flash')
-
-    prompt = f"""
-    Analizza fattura ittica. Estrai JSON array.
-    REGOLE:
-    1. "nome": Nome commerciale.
-    2. "sci": Nome scientifico.
-    3. "lotto": Codice lotto.
-    4. "metodo": "PESCATO" o "ALLEVATO".
-    5. "zona": Zona FAO o Paese allevamento.
-    6. "origine": Nazionalità (es. ITALIA).
-    7. "attrezzo": Tipo di attrezzo.
-    8. "conf": Data confezionamento (GG/MM/AAAA).
-    
-    NO commenti. Solo JSON.
-    Testo: {testo_pdf}
-    """
-    try:
+        prompt = f"""
+        Analizza fattura ittica. Estrai JSON array.
+        REGOLE:
+        1. "nome": Nome commerciale.
+        2. "sci": Nome scientifico.
+        3. "lotto": Codice lotto.
+        4. "metodo": "PESCATO" o "ALLEVATO".
+        5. "zona": Zona FAO o Paese allevamento.
+        6. "origine": Nazionalità (es. ITALIA).
+        7. "attrezzo": Tipo di attrezzo.
+        8. "conf": Data confezionamento (GG/MM/AAAA).
+        
+        NO commenti. Solo JSON.
+        Testo: {testo_pdf}
+        """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
@@ -118,7 +112,6 @@ def disegna_su_pdf(pdf, p):
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
     pdf.ln(1)
-    
     pdf.set_font("helvetica", "", 8)
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci(p.get('zona', ''))
@@ -162,37 +155,24 @@ def converti_pdf_in_immagine(pdf_bytes):
     return doc.load_page(0).get_pixmap(dpi=120).tobytes("png")
 
 # --- 4. INTERFACCIA ---
-c_t, c_l = st.columns([5,1])
-with c_t: st.title("⚓ FishLabel AI Pro")
-with c_l: st.markdown("<h1>🐟</h1>", unsafe_allow_html=True)
+st.title("⚓ FishLabel AI Pro")
 
-# --- SIDEBAR: GESTIONE MODELLO E MEMORIA ---
-with st.sidebar:
-    st.header("🧠 Cervello AI")
-    # SELETTORE MODELLO
-    nome_modello = st.selectbox("Scegli Modello", list(MODELLI_AI.keys()), index=0)
+# --- SELETTORE MODELLO (RICHIESTA UTENTE) ---
+col_model, _ = st.columns([2, 3])
+with col_model:
+    nome_modello = st.selectbox("🧠 Seleziona Motore AI", list(MODELLI_AI.keys()), index=0)
     codice_modello = MODELLI_AI[nome_modello]
-    st.caption(f"Usando: {codice_modello}")
-    
-    st.divider()
-    st.header("Memoria")
-    st.metric("Nomi Salvati", len(st.session_state.learned_map))
-    if st.button("🗑️ Reset Memoria"):
-        st.session_state.clear()
-        st.rerun()
 
 # --- MAIN APP ---
 if not st.session_state.get("prodotti"):
-    col_up, _ = st.columns([1, 2])
+    col_up, _ = st.columns([1, 2]) # Uploader corto
     with col_up:
         file = st.file_uploader("Carica Fattura", type="pdf", label_visibility="collapsed")
         if file and st.button("🚀 Analizza PDF", type="primary"):
             with st.spinner(f"Analisi con {nome_modello}..."):
                 reader = PdfReader(file)
                 text = " ".join([p.extract_text() for p in reader.pages])
-                # Passo il modello scelto alla funzione
                 res = chiedi_a_gemini(text, codice_modello)
-                
                 if res:
                     final = []
                     for p in res:
@@ -208,11 +188,13 @@ else:
     c_inf, c_cl = st.columns([5, 1])
     with c_inf:
         st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti")
-        col_red, _ = st.columns([2, 3])
+        col_red, _ = st.columns([2, 3]) # Tasto rullino corto
         with col_red:
             st.download_button("🖨️ SCARICA RULLINO", genera_pdf(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
     with c_cl:
         if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     for i, p in enumerate(st.session_state.prodotti):
         with st.container(border=True):
@@ -228,14 +210,12 @@ else:
             c4, c5, c6 = st.columns(3)
             p['zona'] = c4.text_input("Zona (FAO o Paese)", p.get('zona',''), key=f"z_{i}")
             p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
-            
             if p['metodo'] == "PESCATO":
                 attr_curr = p.get('attrezzo', 'Sconosciuto')
                 a_idx = LISTA_ATTREZZI.index(attr_curr) if attr_curr in LISTA_ATTREZZI else 0
                 p['attrezzo'] = c6.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
             else:
-                p['attrezzo'] = ""
-                c6.write("")
+                p['attrezzo'] = ""; c6.write("")
 
             c7, c8, c9 = st.columns(3)
             p['prezzo'] = c7.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
@@ -244,5 +224,5 @@ else:
 
             st.image(converti_pdf_in_immagine(genera_pdf([p])), width=350)
             if p['nome'] and p['sci']: st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
-    
+
     salva_memoria(st.session_state.learned_map)
