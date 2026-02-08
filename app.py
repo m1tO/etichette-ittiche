@@ -85,19 +85,15 @@ def chiedi_a_gemini(testo_pdf):
         return dati if isinstance(dati, list) else []
     except: return []
 
-# --- 3. MOTORE PDF (FIX CRASH LARGHEZZA) ---
+# --- 3. MOTORE PDF ---
 def pulisci(t):
     return str(t).replace("€", "EUR").encode('latin-1', 'replace').decode('latin-1') if t else ""
 
 def disegna_su_pdf(pdf, p):
     pdf.add_page()
-    # Margini: 2mm
     pdf.set_margins(2, 3, 2)
     
-    # FIX ERRORE FPDF:
-    # Larghezza foglio (100mm) - Margine Sinistro (2mm) - Margine Destro (2mm) = 96mm
-    # Usiamo w=96 invece di w=0 per evitare il crash "Not enough space".
-    w_full = 96
+    w_full = 96 # Larghezza utile (100mm - 2mm - 2mm)
     
     # Intestazione
     pdf.set_font("helvetica", "B", 8)
@@ -134,15 +130,13 @@ def disegna_su_pdf(pdf, p):
     # Lotto (Centrato)
     pdf.set_y(43)
     pdf.set_font("helvetica", "B", 11)
-    # Centriamo il box da 75mm su 100mm -> x = 12.5
-    pdf.set_x(12.5) 
+    pdf.set_x(12.5) # Centratura manuale per box da 75mm su foglio 100mm
     lotto = pulisci(p.get('lotto',''))
     pdf.cell(75, 10, f"LOTTO: {lotto}", 1, 0, 'C')
     
     # Conf (In basso a destra)
     pdf.set_y(56)
     pdf.set_font("helvetica", "", 7)
-    # Reimposto margine destro per sicurezza
     pdf.set_right_margin(2)
     pdf.cell(w_full, 4, f"Conf: {pulisci(p.get('conf',''))}", 0, 0, 'R')
 
@@ -173,8 +167,7 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# --- GESTIONE STATO E UPLOAD ---
-# Se non ci sono prodotti, mostra l'uploader
+# --- GESTIONE STATO ---
 if not st.session_state.get("prodotti"):
     uploaded_file = st.file_uploader("Carica Fattura (PDF)", type="pdf", label_visibility="collapsed")
     
@@ -198,36 +191,35 @@ if not st.session_state.get("prodotti"):
                     st.session_state.prodotti = final
                     st.rerun()
 
-# SE CI SONO PRODOTTI: MOSTRA RISULTATI E TASTO CHIUDI
 else:
     # --- BARRA AZIONI SUPERIORE ---
-    c_info, c_close = st.columns([4, 1])
+    c_info, c_close = st.columns([5, 1])
     with c_info:
         st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti Trovati")
+        # TASTO RULLINO COMPATTO (senza use_container_width=True)
+        pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
+        st.download_button("🖨️ Scarica Rullino (PDF)", pdf_roll, "Rullino.pdf", "application/pdf", type="primary")
+
     with c_close:
-        # TASTO X PER CHIUDERE E RICARICARE
-        if st.button("❌ CHIUDI / NUOVA", type="secondary", use_container_width=True):
+        if st.button("❌ CHIUDI", type="secondary"):
             st.session_state.prodotti = None
             st.rerun()
             
-    # TASTO RULLINO
-    pdf_roll = genera_pdf_rullino(st.session_state.prodotti)
-    st.download_button("🖨️ Scarica Rullino Completo (PDF)", pdf_roll, "Rullino.pdf", "application/pdf", type="primary", use_container_width=True)
-
     st.markdown("<br>", unsafe_allow_html=True)
 
     # LOOP PRODOTTI
     for i, p in enumerate(st.session_state.prodotti):
         with st.container(border=True):
-            # Header: Nome e PDF Singolo
-            c_h1, c_h2 = st.columns([3, 1])
+            # Header
+            c_h1, c_h2 = st.columns([4, 1])
             with c_h1:
                 p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
             with c_h2:
+                # Tasto Download Singolo (piccolo)
                 pdf_s = genera_pdf_singolo(p)
-                st.download_button("📄 PDF Singolo", pdf_s, f"{p['nome']}.pdf", key=f"dl_{i}", use_container_width=True)
+                st.download_button("⬇️ PDF", pdf_s, f"{p['nome']}.pdf", key=f"dl_{i}")
 
-            # Campi Dati
+            # Campi
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown("<div class='label-text'>Nome Scientifico</div>", unsafe_allow_html=True)
@@ -253,3 +245,5 @@ else:
             # Apprendimento
             if p['nome'] and p['sci']:
                 st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
+    
+    salva_memoria(st.session_state.learned_map)
