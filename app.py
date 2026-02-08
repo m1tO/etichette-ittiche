@@ -4,16 +4,14 @@ from PyPDF2 import PdfReader
 from fpdf import FPDF
 import json
 import os
-import base64
 from datetime import datetime, timedelta
-import fitz  # PyMuPDF
-import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAZIONE E TEMA ---
 st.set_page_config(page_title="FishLabel Dark", page_icon="🐟", layout="wide")
 
 st.markdown("""
 <style>
+    /* Tema Dark e Pulizia */
     .stApp { background-color: #0e1117; color: #fafafa; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -87,53 +85,56 @@ def chiedi_a_gemini(testo_pdf):
         return dati if isinstance(dati, list) else []
     except: return []
 
-# --- 3. MOTORE PDF (FIX ALLINEAMENTO LANDSCAPE) ---
+# --- 3. MOTORE PDF (FIX CRASH LARGHEZZA) ---
 def pulisci(t):
     return str(t).replace("€", "EUR").encode('latin-1', 'replace').decode('latin-1') if t else ""
 
 def disegna_su_pdf(pdf, p):
     pdf.add_page()
-    # Margini: Sinistra 2, Alto 3, Destra 2 (più stretti per sfruttare i 100mm)
+    # Margini: 2mm
     pdf.set_margins(2, 3, 2)
     
-    # Larghezza Pagina: 100mm. Usiamo w=0 per dire "tutta la larghezza"
+    # FIX ERRORE FPDF:
+    # Larghezza foglio (100mm) - Margine Sinistro (2mm) - Margine Destro (2mm) = 96mm
+    # Usiamo w=96 invece di w=0 per evitare il crash "Not enough space".
+    w_full = 96
     
     # Intestazione
     pdf.set_font("helvetica", "B", 8)
-    pdf.cell(0, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
+    pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.ln(1)
     
     # Nome (Grande)
     nome = pulisci(p.get('nome','')).upper()
     pdf.set_font("helvetica", "B", 15)
-    pdf.multi_cell(0, 7, nome, 0, 'C')
+    pdf.multi_cell(w_full, 7, nome, 0, 'C')
     
     # Scientifico
     sci = pulisci(p.get('sci',''))
     pdf.set_font("helvetica", "I", 9)
-    pdf.multi_cell(0, 4, f"({sci})", 0, 'C')
+    pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
     pdf.ln(1)
     # Dati Tecnici
     pdf.set_font("helvetica", "", 9)
-    tracc = f"FAO {p.get('fao','')} - {p.get('metodo','')}"
-    pdf.cell(0, 5, tracc, 0, 1, 'C')
+    tracc = f"FAO {pulisci(p.get('fao',''))} - {pulisci(p.get('metodo',''))}"
+    pdf.cell(w_full, 5, tracc, 0, 1, 'C')
     
     # Scadenza
     pdf.set_font("helvetica", "", 8)
-    pdf.cell(0, 4, f"Scadenza: {p.get('scadenza','')}", 0, 1, 'C')
+    pdf.cell(w_full, 4, f"Scadenza: {pulisci(p.get('scadenza',''))}", 0, 1, 'C')
 
     # Prezzo
     prezzo = str(p.get('prezzo', '')).strip()
     if prezzo:
         pdf.set_y(35)
         pdf.set_font("helvetica", "B", 14)
-        pdf.cell(0, 6, f"EUR/Kg: {prezzo}", 0, 1, 'C')
+        pdf.cell(w_full, 6, f"EUR/Kg: {prezzo}", 0, 1, 'C')
 
-    # Lotto (Centrato sulla pagina)
+    # Lotto (Centrato)
     pdf.set_y(43)
     pdf.set_font("helvetica", "B", 11)
-    # Calcolo per centrare il box lotto (Largo 75mm su foglio 100mm -> x = 12.5)
+    # Centriamo il box da 75mm su 100mm -> x = 12.5
     pdf.set_x(12.5) 
     lotto = pulisci(p.get('lotto',''))
     pdf.cell(75, 10, f"LOTTO: {lotto}", 1, 0, 'C')
@@ -141,9 +142,9 @@ def disegna_su_pdf(pdf, p):
     # Conf (In basso a destra)
     pdf.set_y(56)
     pdf.set_font("helvetica", "", 7)
-    # Reset margine destro per sicurezza
+    # Reimposto margine destro per sicurezza
     pdf.set_right_margin(2)
-    pdf.cell(0, 4, f"Conf: {p.get('conf','')}", 0, 0, 'R')
+    pdf.cell(w_full, 4, f"Conf: {pulisci(p.get('conf',''))}", 0, 0, 'R')
 
 def genera_pdf_rullino(lista_p):
     pdf = FPDF('L', 'mm', (62, 100))
