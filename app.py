@@ -17,6 +17,8 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .block-container {padding-top: 1rem;}
+    /* Nascondi il bordo delle immagini se necessario */
+    img {border: 1px solid #ddd; border-radius: 4px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,7 +87,7 @@ def chiedi_a_gemini(testo_pdf):
                     "fao": p.get("fao", ""),
                     "metodo": p.get("metodo", "PESCATO"),
                     "conf": p.get("conf", ""),
-                    "prezzo": "" # Il prezzo lo inserisci tu a mano
+                    "prezzo": "" 
                 })
             return lista_pulita
         return []
@@ -94,6 +96,11 @@ def chiedi_a_gemini(testo_pdf):
         return []
 
 # --- 4. MOTORE PDF ---
+def pulisci_testo(testo):
+    """Rimuove caratteri che rompono il PDF (come il simbolo Euro)."""
+    if not testo: return ""
+    return str(testo).replace("€", "EUR").encode('latin-1', 'replace').decode('latin-1')
+
 def disegna_su_pdf(pdf, p):
     pdf.add_page()
     pdf.set_auto_page_break(False)
@@ -104,12 +111,13 @@ def disegna_su_pdf(pdf, p):
     pdf.ln(1)
     
     # Nome
+    nome = pulisci_testo(p.get('nome','')).upper()
     pdf.set_font("helvetica", "B", 15)
-    pdf.multi_cell(w=pdf.epw, h=7, text=str(p.get('nome','')).upper(), align='C')
+    pdf.multi_cell(w=pdf.epw, h=7, text=nome, align='C')
     
     # Scientifico
     pdf.ln(1)
-    sci = str(p.get('sci',''))
+    sci = pulisci_testo(p.get('sci',''))
     fs = 9 if len(sci) < 25 else 7
     pdf.set_font("helvetica", "I", fs)
     pdf.multi_cell(w=pdf.epw, h=4, text=f"({sci})", align='C')
@@ -117,29 +125,35 @@ def disegna_su_pdf(pdf, p):
     # Tracciabilità
     pdf.ln(1)
     pdf.set_font("helvetica", "", 9)
-    pdf.cell(w=pdf.epw, h=5, text=f"FAO {p.get('fao','')} - {p.get('metodo','')}", align='C', ln=True)
+    fao = pulisci_testo(p.get('fao',''))
+    met = pulisci_testo(p.get('metodo',''))
+    pdf.cell(w=pdf.epw, h=5, text=f"FAO {fao} - {met}", align='C', ln=True)
     
     # Scadenza
     pdf.set_font("helvetica", "", 8)
-    pdf.cell(w=pdf.epw, h=4, text=f"Scadenza: {p.get('scadenza','')}", align='C', ln=True)
+    scad = pulisci_testo(p.get('scadenza',''))
+    pdf.cell(w=pdf.epw, h=4, text=f"Scadenza: {scad}", align='C', ln=True)
 
-    # --- ZONA PREZZO (OPZIONALE) ---
-    prezzo = p.get('prezzo', '').strip()
+    # --- ZONA PREZZO (CORRETTA) ---
+    prezzo = str(p.get('prezzo', '')).strip()
     if prezzo:
         pdf.set_y(32)
         pdf.set_font("helvetica", "B", 14)
-        pdf.cell(w=pdf.epw, h=6, text=f"Euro/Kg: {prezzo} €", align='C', ln=True)
+        # HO TOLTO IL SIMBOLO € QUI SOTTO PER EVITARE IL CRASH
+        pdf.cell(w=pdf.epw, h=6, text=f"Euro/Kg: {prezzo}", align='C', ln=True)
 
     # Lotto
     pdf.set_y(40)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_x((100 - 70) / 2)
-    pdf.cell(w=70, h=9, text=f"LOTTO: {p.get('lotto','')}", border=1, align='C')
+    lotto = pulisci_testo(p.get('lotto',''))
+    pdf.cell(w=70, h=9, text=f"LOTTO: {lotto}", border=1, align='C')
     
     # Data Confezionamento
     pdf.set_y(54)
     pdf.set_font("helvetica", "", 7)
-    pdf.cell(w=pdf.epw, h=4, text=f"Conf: {p.get('conf','')}", align='R')
+    conf = pulisci_testo(p.get('conf',''))
+    pdf.cell(w=pdf.epw, h=4, text=f"Conf: {conf}", align='R')
 
 def genera_pdf_bytes(p):
     pdf = FPDF(orientation='L', unit='mm', format=(62, 100))
@@ -182,7 +196,7 @@ st.title("⚓ FishLabel AI PRO")
 with st.sidebar:
     st.header("⚙️ Memoria")
     mem_json = json.dumps(st.session_state.learned_map, indent=4, ensure_ascii=False)
-    st.download_button("💾 Scarica Memoria", mem_json, "memoria.json", "application/json")
+    st.download_button("💾 Scarica Memoria", mem_json, "memoria_nomi.json", "application/json")
     up = st.file_uploader("Carica Memoria", type="json")
     if up: st.session_state.learned_map.update(json.load(up))
     if st.button("🗑️ RESET"):
@@ -231,8 +245,8 @@ if file:
                 with c2:
                     p['fao'] = st.text_input("FAO", p.get('fao', ''), key=f"f_{i}")
                     p['lotto'] = st.text_input("Lotto", p.get('lotto', ''), key=f"l_{i}")
-                    # NUOVO CAMPO PREZZO (OPZIONALE)
-                    p['prezzo'] = st.text_input("Prezzo al Kg (€)", p.get('prezzo', ''), placeholder="es: 25.00", key=f"pr_{i}")
+                    # INPUT PREZZO
+                    p['prezzo'] = st.text_input("Prezzo (€/Kg)", p.get('prezzo', ''), placeholder="es: 25.00", key=f"pr_{i}")
                 with c3:
                     p['scadenza'] = st.text_input("Scadenza", p.get('scadenza', ''), key=f"sc_{i}")
                     p['conf'] = st.text_input("Confezionamento", p.get('conf', ''), key=f"cf_{i}")
