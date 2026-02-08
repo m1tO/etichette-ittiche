@@ -6,23 +6,23 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-import fitz  # PyMuPDF
+import fitz 
 import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAZIONE E TEMA ---
+# --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="FishLabel AI Pro", page_icon="⚓", layout="wide")
 
-# SELETTORE MODELLI RICHIESTI
+# Lista attrezzi senza "Sconosciuto" come default visibile
+LISTA_ATTREZZI = [
+    "Reti da traino", "Reti da posta", "Ami e palangari",
+    "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"
+]
+
 MODELLI_AI = {
-    "⚡ Gemini 2.5 Flash (Default)": "gemini-2.5-flash",
+    "⚡ Gemini 2.5 Flash": "gemini-2.5-flash",
     "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite",
     "🔥 Gemini 3 Flash": "gemini-3-flash"
 }
-
-LISTA_ATTREZZI = [
-    "Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari",
-    "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"
-]
 
 st.markdown("""
 <style>
@@ -33,17 +33,14 @@ st.markdown("""
     input[type="text"] { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
     .label-text { font-size: 0.8rem; color: #aaa; margin-bottom: 2px; }
-    
-    /* BOTTONE RULLINO ROSSO E COMPATTO */
     div.stDownloadButton > button {
         background-color: #FF4B4B !important; color: white !important; font-size: 18px !important;
         padding: 0.8rem 2rem !important; border: none !important; border-radius: 8px !important;
-        box-shadow: 0 4px 10px rgba(255, 75, 75, 0.4);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. BACKEND ---
+# --- 2. LOGICA AI ---
 MEMORIA_FILE = "memoria_nomi.json"
 def carica_memoria():
     if os.path.exists(MEMORIA_FILE):
@@ -67,31 +64,26 @@ def chiedi_a_gemini(testo_pdf, model_name):
     try:
         model = genai.GenerativeModel(model_name)
         prompt = f"""
-        Analizza fattura ittica. Estrai JSON array.
-        REGOLE:
-        1. "nome": Nome commerciale.
-        2. "sci": Nome scientifico.
+        Analizza la fattura ed estrai JSON array. Sii estremamente preciso.
+        1. "nome": Nome commerciale (es. TRIGLIA DI SCOGLIO).
+        2. "sci": Nome scientifico (es. Mullus surmuletus). OBBLIGATORIO.
         3. "lotto": Codice lotto.
         4. "metodo": "PESCATO" o "ALLEVATO".
-        5. "zona": Zona FAO o Paese allevamento.
-        6. "origine": Nazionalità (es. ITALIA).
-        7. "attrezzo": Tipo di attrezzo.
-        8. "conf": Data confezionamento (GG/MM/AAAA).
-        
-        NO commenti. Solo JSON.
+        5. "zona": Zona FAO specifica (es. 37.1.3).
+        6. "origine": Nazione (es. ITALIA, GRECIA).
+        7. "attrezzo": Uno tra: {", ".join(LISTA_ATTREZZI)}. Se non lo trovi, scrivi "Sconosciuto".
+        8. "conf": Data confezionamento originale (GG/MM/AAAA).
         Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
-    except Exception as e:
-        st.error(f"Errore con {model_name}: {e}")
-        return []
+    except: return []
 
-# --- 3. MOTORE PDF ---
+# --- 3. MOTORE PDF (LAYOUT CORRETTO) ---
 def pulisci(t):
     if not t: return ""
-    t = re.sub(r'\(.*?\)', '', str(t))
+    t = re.sub(r'\(.*?\)', '', str(t)) # Rimuove commenti AI
     return t.replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
 
 def disegna_su_pdf(pdf, p):
@@ -99,47 +91,55 @@ def disegna_su_pdf(pdf, p):
     pdf.set_margins(4, 3, 4)
     w_full = 92
     
+    # Header
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.ln(1)
     
-    nome = pulisci(p.get('nome','')).upper()
+    # Nome Commerciale (Grande)
     pdf.set_font("helvetica", "B", 15)
-    pdf.multi_cell(w_full, 7, nome, 0, 'C')
+    pdf.multi_cell(w_full, 7, pulisci(p.get('nome','')).upper(), 0, 'C')
     
-    sci = pulisci(p.get('sci',''))
-    pdf.set_font("helvetica", "I", 8)
-    pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
+    # Nome Scientifico (Obbligatorio sotto il nome)
+    pdf.set_font("helvetica", "I", 9)
+    pdf.multi_cell(w_full, 5, f"({pulisci(p.get('sci',''))})", 0, 'C')
     
-    pdf.ln(1)
-    pdf.set_font("helvetica", "", 8)
+    pdf.ln(2)
+    pdf.set_font("helvetica", "", 9)
+    
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci(p.get('zona', ''))
     origine = pulisci(p.get('origine', ''))
     attrezzo = pulisci(p.get('attrezzo', ''))
     
     if "ALLEVATO" in metodo:
-        pdf.multi_cell(w_full, 4, f"ALLEVATO IN: {zona.upper()}", 0, 'C')
+        pdf.multi_cell(w_full, 5, f"ALLEVATO IN: {origine.upper()}", 0, 'C')
+        pdf.cell(w_full, 5, f"Zona: {zona.upper()}", 0, 1, 'C')
     else:
-        attr_text = f" CON {attrezzo.upper()}" if attrezzo and attrezzo != "SCONOSCIUTO" else ""
-        pdf.set_font("helvetica", "B", 8)
-        pdf.multi_cell(w_full, 4, f"PESCATO{attr_text}", 0, 'C')
-        pdf.set_font("helvetica", "", 8)
-        naz_text = f" - {origine.upper()}" if origine else ""
-        pdf.multi_cell(w_full, 4, f"ZONA: {zona.upper()}{naz_text}", 0, 'C')
+        # Layout Pescato: Metodo + Attrezzo
+        attr_txt = f" CON {attrezzo.upper()}" if attrezzo and attrezzo != "SCONOSCIUTO" else ""
+        pdf.set_font("helvetica", "B", 9)
+        pdf.multi_cell(w_full, 5, f"PESCATO{attr_txt}", 0, 'C')
+        # Sotto: Zona e Nazione
+        pdf.set_font("helvetica", "", 9)
+        naz_txt = f" - {origine.upper()}" if origine else ""
+        pdf.multi_cell(w_full, 5, f"ZONA: {zona.upper()}{naz_txt}", 0, 'C')
     
-    pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
+    pdf.cell(w_full, 5, "PRODOTTO FRESCO", 0, 1, 'C')
 
+    # Prezzo
     if str(p.get('prezzo', '')).strip():
-        pdf.set_y(35)
-        pdf.set_font("helvetica", "B", 13)
+        pdf.set_y(38)
+        pdf.set_font("helvetica", "B", 14)
         pdf.cell(w_full, 6, f"EUR/Kg: {p.get('prezzo','')}", 0, 1, 'C')
 
-    pdf.set_y(43)
+    # Lotto (Box Fisso)
+    pdf.set_y(46)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_x(12.5)
-    pdf.cell(75, 10, f"LOTTO: {pulisci(p.get('lotto',''))}", 1, 0, 'C')
+    pdf.cell(75, 9, f"LOTTO: {pulisci(p.get('lotto',''))}", 1, 0, 'C')
     
+    # Footer Date
     pdf.set_y(56)
     pdf.set_font("helvetica", "", 7)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
@@ -150,51 +150,38 @@ def genera_pdf(lista_p):
     for p in lista_p: disegna_su_pdf(pdf, p)
     return bytes(pdf.output())
 
-def converti_pdf_in_immagine(pdf_bytes):
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    return doc.load_page(0).get_pixmap(dpi=120).tobytes("png")
-
 # --- 4. INTERFACCIA ---
 st.title("⚓ FishLabel AI Pro")
 
-# --- SELETTORE MODELLO (RICHIESTA UTENTE) ---
 col_model, _ = st.columns([2, 3])
 with col_model:
-    nome_modello = st.selectbox("🧠 Seleziona Motore AI", list(MODELLI_AI.keys()), index=0)
+    nome_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
     codice_modello = MODELLI_AI[nome_modello]
 
-# --- MAIN APP ---
 if not st.session_state.get("prodotti"):
-    col_up, _ = st.columns([1, 2]) # Uploader corto
+    col_up, _ = st.columns([1, 2])
     with col_up:
-        file = st.file_uploader("Carica Fattura", type="pdf", label_visibility="collapsed")
+        file = st.file_uploader("Fattura PDF", type="pdf", label_visibility="collapsed")
         if file and st.button("🚀 Analizza PDF", type="primary"):
-            with st.spinner(f"Analisi con {nome_modello}..."):
+            with st.spinner("Estrazione dati..."):
                 reader = PdfReader(file)
                 text = " ".join([p.extract_text() for p in reader.pages])
                 res = chiedi_a_gemini(text, codice_modello)
                 if res:
-                    final = []
                     for p in res:
                         k = p.get('sci','').upper().strip()
                         if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
                         p['scadenza'] = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
                         if not p.get('conf'): p['conf'] = datetime.now().strftime("%d/%m/%Y")
-                        p['prezzo'] = ""
-                        final.append(p)
-                    st.session_state.prodotti = final
+                    st.session_state.prodotti = res
                     st.rerun()
 else:
     c_inf, c_cl = st.columns([5, 1])
     with c_inf:
         st.subheader(f"✅ {len(st.session_state.prodotti)} Prodotti")
-        col_red, _ = st.columns([2, 3]) # Tasto rullino corto
-        with col_red:
-            st.download_button("🖨️ SCARICA RULLINO", genera_pdf(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
+        st.download_button("🖨️ SCARICA RULLINO", genera_pdf(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
     with c_cl:
         if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
 
     for i, p in enumerate(st.session_state.prodotti):
         with st.container(border=True):
@@ -203,26 +190,26 @@ else:
             with c_h2: st.download_button("⬇️ PDF", genera_pdf([p]), f"{p['nome']}.pdf", key=f"dl_{i}")
 
             c1, c2, c3 = st.columns(3)
-            p['sci'] = c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
+            p['sci'] = c1.text_input("Scientifico (Obbligatorio)", p.get('sci',''), key=f"s_{i}")
             p['lotto'] = c2.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
             p['metodo'] = c3.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
 
             c4, c5, c6 = st.columns(3)
-            p['zona'] = c4.text_input("Zona (FAO o Paese)", p.get('zona',''), key=f"z_{i}")
-            p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
+            p['zona'] = c4.text_input("Zona FAO (es. 37.1.3)", p.get('zona',''), key=f"z_{i}")
+            p['origine'] = c5.text_input("Nazionalità (es. ITALIA)", p.get('origine',''), key=f"o_{i}")
+            
             if p['metodo'] == "PESCATO":
-                attr_curr = p.get('attrezzo', 'Sconosciuto')
+                attr_curr = p.get('attrezzo', '')
                 a_idx = LISTA_ATTREZZI.index(attr_curr) if attr_curr in LISTA_ATTREZZI else 0
                 p['attrezzo'] = c6.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
             else:
-                p['attrezzo'] = ""; c6.write("")
+                p['attrezzo'] = ""; c6.empty()
 
             c7, c8, c9 = st.columns(3)
             p['prezzo'] = c7.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
             p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
             p['conf'] = c9.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
 
-            st.image(converti_pdf_in_immagine(genera_pdf([p])), width=350)
             if p['nome'] and p['sci']: st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
-
+    
     salva_memoria(st.session_state.learned_map)
