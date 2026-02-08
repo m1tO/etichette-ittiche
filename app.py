@@ -62,9 +62,9 @@ def chiedi_a_gemini(testo_pdf):
     1. "nome": Nome commerciale (es. SEPPIA).
     2. "sci": Nome scientifico.
     3. "lotto": Codice lotto.
-    4. "fao": Zona FAO (es. 34).
+    4. "fao": Zona FAO.
     5. "metodo": "PESCATO" o "ALLEVATO".
-    6. "conf": Cerca la data di confezionamento originale sulla fattura (formato GG/MM/AAAA). Se non la trovi, lascia vuoto.
+    6. "conf": Data confezionamento originale (GG/MM/AAAA).
     
     Testo: {testo_pdf}
     RISPONDI SOLO COL JSON.
@@ -78,15 +78,15 @@ def chiedi_a_gemini(testo_pdf):
         lista_pulita = []
         if isinstance(dati, list):
             for p in dati:
-                p_safe = {
+                lista_pulita.append({
                     "nome": p.get("nome", "DA COMPILARE"),
                     "sci": p.get("sci", ""),
                     "lotto": p.get("lotto", ""),
                     "fao": p.get("fao", ""),
                     "metodo": p.get("metodo", "PESCATO"),
-                    "conf": p.get("conf", "") # Data confezionamento estratta
-                }
-                lista_pulita.append(p_safe)
+                    "conf": p.get("conf", ""),
+                    "prezzo": "" # Il prezzo lo inserisci tu a mano
+                })
             return lista_pulita
         return []
     except Exception as e:
@@ -115,7 +115,7 @@ def disegna_su_pdf(pdf, p):
     pdf.multi_cell(w=pdf.epw, h=4, text=f"({sci})", align='C')
     
     # Tracciabilità
-    pdf.ln(2)
+    pdf.ln(1)
     pdf.set_font("helvetica", "", 9)
     pdf.cell(w=pdf.epw, h=5, text=f"FAO {p.get('fao','')} - {p.get('metodo','')}", align='C', ln=True)
     
@@ -123,13 +123,20 @@ def disegna_su_pdf(pdf, p):
     pdf.set_font("helvetica", "", 8)
     pdf.cell(w=pdf.epw, h=4, text=f"Scadenza: {p.get('scadenza','')}", align='C', ln=True)
 
+    # --- ZONA PREZZO (OPZIONALE) ---
+    prezzo = p.get('prezzo', '').strip()
+    if prezzo:
+        pdf.set_y(32)
+        pdf.set_font("helvetica", "B", 14)
+        pdf.cell(w=pdf.epw, h=6, text=f"Euro/Kg: {prezzo} €", align='C', ln=True)
+
     # Lotto
-    pdf.set_y(38)
-    pdf.set_font("helvetica", "B", 12)
-    pdf.set_x((100 - 80) / 2)
-    pdf.cell(w=80, h=11, text=f"LOTTO: {p.get('lotto','')}", border=1, align='C')
+    pdf.set_y(40)
+    pdf.set_font("helvetica", "B", 11)
+    pdf.set_x((100 - 70) / 2)
+    pdf.cell(w=70, h=9, text=f"LOTTO: {p.get('lotto','')}", border=1, align='C')
     
-    # Data Confezionamento (MODIFICATA: non più datetime.now)
+    # Data Confezionamento
     pdf.set_y(54)
     pdf.set_font("helvetica", "", 7)
     pdf.cell(w=pdf.epw, h=4, text=f"Conf: {p.get('conf','')}", align='R')
@@ -200,15 +207,11 @@ if file:
                     sci = p.get('sci', '').upper().strip()
                     if sci in st.session_state.learned_map:
                         p['nome'] = st.session_state.learned_map[sci]
-                    # Default Scadenza se non trova nulla
                     p['scadenza'] = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
-                    # Se l'AI non ha trovato la data confezionamento, mettiamo oggi come aiuto, ma l'utente deve controllare
                     if not p['conf']: p['conf'] = datetime.now().strftime("%d/%m/%Y")
-                
                 st.session_state.prodotti = prodotti
 
     if st.session_state.get("prodotti"):
-        # Rullino PDF
         pdf_tot = FPDF(orientation='L', unit='mm', format=(62, 100))
         pdf_tot.set_margins(4, 3, 4)
         for p in st.session_state.prodotti:
@@ -227,13 +230,12 @@ if file:
                         st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
                 with c2:
                     p['fao'] = st.text_input("FAO", p.get('fao', ''), key=f"f_{i}")
-                    idx = 0 if "PESCATO" in p.get('metodo', '').upper() else 1
-                    p['metodo'] = st.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=idx, key=f"m_{i}")
                     p['lotto'] = st.text_input("Lotto", p.get('lotto', ''), key=f"l_{i}")
+                    # NUOVO CAMPO PREZZO (OPZIONALE)
+                    p['prezzo'] = st.text_input("Prezzo al Kg (€)", p.get('prezzo', ''), placeholder="es: 25.00", key=f"pr_{i}")
                 with c3:
                     p['scadenza'] = st.text_input("Scadenza", p.get('scadenza', ''), key=f"sc_{i}")
-                    # NUOVO CAMPO CONFEZIONAMENTO
-                    p['conf'] = st.text_input("Confezionamento (Conf)", p.get('conf', ''), key=f"cf_{i}")
+                    p['conf'] = st.text_input("Confezionamento", p.get('conf', ''), key=f"cf_{i}")
                     
                     pdf_bytes = genera_pdf_bytes(p)
                     img_bytes = converti_pdf_in_immagine(pdf_bytes)
