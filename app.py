@@ -26,19 +26,31 @@ MODELLI_AI = {
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
+    
+    /* Box prodotti */
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 20px;
     }
+    
+    /* Input */
     input[type="text"] { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
+    
+    /* Titolo */
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
+    
+    /* Bottone Rullino Rosso */
     div.stDownloadButton > button {
         background-color: #FF4B4B !important; color: white !important; font-size: 18px !important;
         padding: 0.8rem 2rem !important; border: none !important; border-radius: 8px !important;
+        box-shadow: 0 4px 10px rgba(255, 75, 75, 0.4);
     }
-    /* Stile per i Tab */
+    
+    /* >>> MODIFICA TABS GIGANTI <<< */
     button[data-baseweb="tab"] {
-        font-size: 18px;
-        font-weight: bold;
+        font-size: 26px !important;
+        font-weight: 700 !important;
+        padding: 10px 20px !important;
+        margin: 0 5px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -72,7 +84,7 @@ def chiedi_a_gemini(testo_pdf, model_name):
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA (INALTERATO) ---
+# --- 3. MOTORE DI STAMPA ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -146,14 +158,13 @@ def converti_pdf_in_immagine(pdf_bytes):
 # --- 4. INTERFACCIA ---
 st.title("⚓ FishLabel AI Pro")
 
-# --- LOGICA IBRIDA (AUTOMATICO / MANUALE) ---
+# --- LOGICA IBRIDA ---
 if not st.session_state.get("prodotti"):
     
-    # Creo due TAB per separare le funzioni
-    tab1, tab2 = st.tabs(["📤 Carica Fattura (AI)", "✍️ Inserimento Manuale"])
+    # TABS GIGANTI
+    tab1, tab2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
     
     with tab1:
-        # --- SEZIONE 1: AI & PDF (Codice Esistente) ---
         col_model, _ = st.columns([2, 3])
         with col_model:
             n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
@@ -163,7 +174,7 @@ if not st.session_state.get("prodotti"):
         with col_up:
             file = st.file_uploader("Fattura PDF", type="pdf", label_visibility="collapsed")
             if file and st.button("🚀 Analizza PDF", type="primary"):
-                with st.spinner("Estrazione dati..."):
+                with st.spinner("Analisi in corso..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
                     res = chiedi_a_gemini(text, c_modello)
                     if res:
@@ -177,37 +188,27 @@ if not st.session_state.get("prodotti"):
                         st.rerun()
 
     with tab2:
-        # --- SEZIONE 2: MANUALE (Nuova Funzione) ---
-        st.write("Crea un'etichetta da zero senza PDF.")
+        st.write("### Crea etichetta vuota")
         if st.button("➕ Crea Nuova Etichetta", type="secondary"):
-            # Inizializzo un prodotto vuoto con le date di oggi
             p_vuoto = {
-                "nome": "NUOVO PRODOTTO",
-                "sci": "",
-                "lotto": "",
-                "metodo": "PESCATO",
-                "zona": "37.1.3",
-                "origine": "ITALIA",
-                "attrezzo": "",
-                "conf": datetime.now().strftime("%d/%m/%Y"),
-                "scadenza": (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y"),
-                "prezzo": ""
+                "nome": "NUOVO PRODOTTO", "sci": "", "lotto": "",
+                "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA",
+                "attrezzo": "", "conf": datetime.now().strftime("%d/%m/%Y"),
+                "scadenza": (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y"), "prezzo": ""
             }
             st.session_state.prodotti = [p_vuoto]
             st.rerun()
 
 else:
-    # --- EDITOR (IDENTICO PER ENTRAMBI I METODI) ---
+    # --- EDITOR ---
     c_inf, c_cl = st.columns([5, 1])
     with c_inf:
-        # Se c'è un solo prodotto (manuale) o tanti (fattura), il rullino funziona uguale
         st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
     with c_cl:
         if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
 
     for i, p in enumerate(st.session_state.prodotti):
         with st.container(border=True):
-            # Campi Modificabili
             c_h1, c_h2 = st.columns([4, 1])
             with c_h1: p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}")
             with c_h2: st.download_button("⬇️ PDF", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_{i}")
@@ -221,13 +222,10 @@ else:
             p['zona'] = c4.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
             p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
             
-            # Logica Attrezzi
             if p['metodo'] == "PESCATO":
                 a_curr = p.get('attrezzo', '')
-                # Cerco l'attrezzo nella lista, se non c'è uso l'indice 0 (Sconosciuto)
                 a_idx = 0
-                if a_curr in LISTA_ATTREZZI:
-                    a_idx = LISTA_ATTREZZI.index(a_curr)
+                if a_curr in LISTA_ATTREZZI: a_idx = LISTA_ATTREZZI.index(a_curr)
                 p['attrezzo'] = c6.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
             else:
                 p['attrezzo'] = ""; c6.empty()
@@ -237,7 +235,6 @@ else:
             p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
             p['conf'] = c9.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
 
-            # Anteprima e Apprendimento
             st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=380)
             if p['nome'] and p['sci']: st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
 
