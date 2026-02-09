@@ -6,7 +6,8 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
-import fitz 
+import fitz  # PyMuPDF
+import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="FishLabel AI Pro", page_icon="⚓", layout="wide")
@@ -33,6 +34,11 @@ st.markdown("""
     div.stDownloadButton > button {
         background-color: #FF4B4B !important; color: white !important; font-size: 18px !important;
         padding: 0.8rem 2rem !important; border: none !important; border-radius: 8px !important;
+    }
+    /* Stile per i Tab */
+    button[data-baseweb="tab"] {
+        font-size: 18px;
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -66,34 +72,33 @@ def chiedi_a_gemini(testo_pdf, model_name):
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA UNICO E DEFINITIVO ---
+# --- 3. MOTORE DI STAMPA (INALTERATO) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
 
 def disegna_su_pdf(pdf, p):
-    """Funzione universale di disegno per singola e rullino."""
     pdf.add_page()
     pdf.set_margins(4, 3, 4)
     w_full = 92
     
-    # 1. Intestazione (Y=3)
+    # Intestazione
     pdf.set_y(3)
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     
-    # 2. Nome Commerciale (Y=8)
+    # Nome
     pdf.set_y(8)
     pdf.set_font("helvetica", "B", 15)
     pdf.multi_cell(w_full, 6, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
     
-    # 3. Nome Scientifico (Y=19)
+    # Scientifico
     pdf.set_y(19)
     sci = pulisci_testo(p.get('sci',''))
-    pdf.set_font("helvetica", "I", 10) # Leggermente più grande per leggibilità
+    pdf.set_font("helvetica", "I", 10)
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
-    # 4. Blocco Unico: Metodo, Attrezzo, Zona e Nazione (Y=27)
+    # Dati Tecnici
     pdf.set_y(27)
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci_testo(p.get('zona', ''))
@@ -103,29 +108,27 @@ def disegna_su_pdf(pdf, p):
     if "ALLEVATO" in metodo:
         testo_origine = f"ALLEVATO IN: {origine.upper()} (Zona: {zona.upper()})"
     else:
-        # Pescato: Unisco tutto in un'unica stringa per multi_cell
         attr_txt = f" CON {attrezzo.upper()}" if attrezzo and "SCONOSCIUTO" not in attrezzo.upper() else ""
         testo_origine = f"PESCATO{attr_txt}\nZONA: {zona.upper()} - {origine.upper()}"
     
     pdf.set_font("helvetica", "", 9)
     pdf.multi_cell(w_full, 4, testo_origine, 0, 'C')
     
-    # Prodotto Fresco (Sempre sotto l'origine)
     pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
 
-    # 5. Prezzo (Y=40)
+    # Prezzo
     if str(p.get('prezzo', '')).strip():
         pdf.set_y(40)
         pdf.set_font("helvetica", "B", 13)
         pdf.cell(w_full, 6, f"EUR/Kg: {p.get('prezzo','')}", 0, 1, 'C')
 
-    # 6. Lotto (Y=48)
+    # Lotto
     pdf.set_y(48)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_x(12.5) 
     pdf.cell(75, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
     
-    # 7. Date (Y=57)
+    # Date
     pdf.set_y(57)
     pdf.set_font("helvetica", "", 7)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
@@ -142,34 +145,69 @@ def converti_pdf_in_immagine(pdf_bytes):
 
 # --- 4. INTERFACCIA ---
 st.title("⚓ FishLabel AI Pro")
-nome_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
 
+# --- LOGICA IBRIDA (AUTOMATICO / MANUALE) ---
 if not st.session_state.get("prodotti"):
-    col_up, _ = st.columns([1, 2])
-    with col_up:
-        file = st.file_uploader("Fattura PDF", type="pdf", label_visibility="collapsed")
-        if file and st.button("🚀 Analizza PDF", type="primary"):
-            with st.spinner("Estrazione dati..."):
-                reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
-                res = chiedi_a_gemini(text, MODELLI_AI[nome_modello])
-                if res:
-                    for p in res:
-                        k = p.get('sci','').upper().strip()
-                        if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
-                        p['scadenza'] = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
-                        if not p.get('conf'): p['conf'] = datetime.now().strftime("%d/%m/%Y")
-                        p['prezzo'] = ""
-                    st.session_state.prodotti = res
-                    st.rerun()
+    
+    # Creo due TAB per separare le funzioni
+    tab1, tab2 = st.tabs(["📤 Carica Fattura (AI)", "✍️ Inserimento Manuale"])
+    
+    with tab1:
+        # --- SEZIONE 1: AI & PDF (Codice Esistente) ---
+        col_model, _ = st.columns([2, 3])
+        with col_model:
+            n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
+            c_modello = MODELLI_AI[n_modello]
+            
+        col_up, _ = st.columns([1, 2])
+        with col_up:
+            file = st.file_uploader("Fattura PDF", type="pdf", label_visibility="collapsed")
+            if file and st.button("🚀 Analizza PDF", type="primary"):
+                with st.spinner("Estrazione dati..."):
+                    reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
+                    res = chiedi_a_gemini(text, c_modello)
+                    if res:
+                        for p in res:
+                            k = p.get('sci','').upper().strip()
+                            if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
+                            p['scadenza'] = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
+                            if not p.get('conf'): p['conf'] = datetime.now().strftime("%d/%m/%Y")
+                            p['prezzo'] = ""
+                        st.session_state.prodotti = res
+                        st.rerun()
+
+    with tab2:
+        # --- SEZIONE 2: MANUALE (Nuova Funzione) ---
+        st.write("Crea un'etichetta da zero senza PDF.")
+        if st.button("➕ Crea Nuova Etichetta", type="secondary"):
+            # Inizializzo un prodotto vuoto con le date di oggi
+            p_vuoto = {
+                "nome": "NUOVO PRODOTTO",
+                "sci": "",
+                "lotto": "",
+                "metodo": "PESCATO",
+                "zona": "37.1.3",
+                "origine": "ITALIA",
+                "attrezzo": "",
+                "conf": datetime.now().strftime("%d/%m/%Y"),
+                "scadenza": (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y"),
+                "prezzo": ""
+            }
+            st.session_state.prodotti = [p_vuoto]
+            st.rerun()
+
 else:
+    # --- EDITOR (IDENTICO PER ENTRAMBI I METODI) ---
     c_inf, c_cl = st.columns([5, 1])
     with c_inf:
+        # Se c'è un solo prodotto (manuale) o tanti (fattura), il rullino funziona uguale
         st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
     with c_cl:
         if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
 
     for i, p in enumerate(st.session_state.prodotti):
         with st.container(border=True):
+            # Campi Modificabili
             c_h1, c_h2 = st.columns([4, 1])
             with c_h1: p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}")
             with c_h2: st.download_button("⬇️ PDF", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_{i}")
@@ -182,9 +220,14 @@ else:
             c4, c5, c6 = st.columns(3)
             p['zona'] = c4.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
             p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
+            
+            # Logica Attrezzi
             if p['metodo'] == "PESCATO":
                 a_curr = p.get('attrezzo', '')
-                a_idx = LISTA_ATTREZZI.index(a_curr) if a_curr in LISTA_ATTREZZI else 0
+                # Cerco l'attrezzo nella lista, se non c'è uso l'indice 0 (Sconosciuto)
+                a_idx = 0
+                if a_curr in LISTA_ATTREZZI:
+                    a_idx = LISTA_ATTREZZI.index(a_curr)
                 p['attrezzo'] = c6.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
             else:
                 p['attrezzo'] = ""; c6.empty()
@@ -194,6 +237,7 @@ else:
             p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
             p['conf'] = c9.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
 
+            # Anteprima e Apprendimento
             st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=380)
             if p['nome'] and p['sci']: st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
 
