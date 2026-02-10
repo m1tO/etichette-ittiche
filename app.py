@@ -7,7 +7,6 @@ import os
 import re
 from datetime import datetime, timedelta
 import fitz  # PyMuPDF
-import streamlit.components.v1 as components
 
 # --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="FishLabel AI Pro", page_icon="⚓", layout="wide")
@@ -37,10 +36,8 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(255, 75, 75, 0.4);
     }
     button[data-baseweb="tab"] {
-        font-size: 26px !important;
-        font-weight: 700 !important;
-        padding: 10px 20px !important;
-        margin: 0 5px !important;
+        font-size: 26px !important; font-weight: 700 !important;
+        padding: 10px 20px !important; margin: 0 5px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -68,13 +65,13 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"Estrai JSON array da fattura: nome, sci (nome scientifico), lotto, metodo (PESCATO/ALLEVATO), zona (FAO), origine (Nazione), attrezzo, conf (GG/MM/AAAA). Testo: {testo_pdf}"
+        prompt = f"Estrai JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo, conf. Testo: {testo_pdf}"
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA (AGGIORNATO PUNTI 1, 2, 3) ---
+# --- 3. MOTORE DI STAMPA (PRECISIONE MILLIMETRICA) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -84,54 +81,54 @@ def disegna_su_pdf(pdf, p):
     pdf.set_margins(4, 3, 4)
     w_full = 92
     
-    # Intestazione
+    # 1. Intestazione
     pdf.set_y(3)
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     
-    # 2. Nome Commerciale (Aumentato dimensione)
-    pdf.set_y(8)
-    pdf.set_font("helvetica", "B", 18) 
+    # 2. Nome Commerciale
+    pdf.set_y(7) # Alzato leggermente
+    pdf.set_font("helvetica", "B", 18)
     pdf.multi_cell(w_full, 7, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
     
-    # Scientifico
-    pdf.set_y(22)
+    # 3. Nome Scientifico (AVVICINATO AL NOME)
+    pdf.set_y(16) # Prima era 22
     sci = pulisci_testo(p.get('sci',''))
     pdf.set_font("helvetica", "I", 10)
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
-    # Dati Tecnici
-    pdf.set_y(29)
+    # 4. Blocco Origine (ALZATO)
+    pdf.set_y(23) # Prima era 29
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci_testo(p.get('zona', ''))
     origine = pulisci_testo(p.get('origine', ''))
     attrezzo = pulisci_testo(p.get('attrezzo', ''))
     
-    if "ALLEVATO" in metodo:
-        testo_origine = f"ALLEVATO IN: {origine.upper()} (Zona: {zona.upper()})"
-    else:
-        attr_txt = f" CON {attrezzo.upper()}" if attrezzo and "SCONOSCIUTO" not in attrezzo.upper() else ""
-        testo_origine = f"PESCATO{attr_txt}\nZONA: {zona.upper()} - {origine.upper()}"
-    
     pdf.set_font("helvetica", "", 9)
-    pdf.multi_cell(w_full, 4, testo_origine, 0, 'C')
+    if "ALLEVATO" in metodo:
+        testo = f"ALLEVATO IN: {origine.upper()} (Zona: {zona.upper()})"
+    else:
+        attr = f" CON {attrezzo.upper()}" if attrezzo and "SCONOSCIUTO" not in attrezzo.upper() else ""
+        testo = f"PESCATO{attr}\nZONA: {zona.upper()} - {origine.upper()}"
+    
+    pdf.multi_cell(w_full, 4, testo, 0, 'C')
     pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
 
-    # 3. Prezzo (Aumentato di "un bel po'")
+    # 5. Prezzo (ALZATO)
     if str(p.get('prezzo', '')).strip():
-        pdf.set_y(41)
-        pdf.set_font("helvetica", "B", 22) 
+        pdf.set_y(36) # Prima era 41
+        pdf.set_font("helvetica", "B", 22)
         pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
 
-    # 1. Lotto (Box fisso e largo per evitare tagli)
-    pdf.set_y(50)
+    # 6. Lotto (ALZATO DA TERRA)
+    pdf.set_y(46) # Prima era 50
     pdf.set_font("helvetica", "B", 11)
-    pdf.set_x(5) 
+    pdf.set_x(5)
     pdf.cell(90, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
     
-    # Date
-    pdf.set_y(59)
-    pdf.set_font("helvetica", "", 7)
+    # 7. Date (PIU SPAZIO DAL BORDO)
+    pdf.set_y(56) # Prima era 59, ora ha più margine dal fondo (62mm totale)
+    pdf.set_font("helvetica", "", 8)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
 
 def genera_pdf_bytes(lista_p):
@@ -149,49 +146,27 @@ st.title("⚓ FishLabel AI Pro")
 
 if not st.session_state.get("prodotti"):
     tab1, tab2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
-    
     with tab1:
-        col_model, _ = st.columns([2, 3])
-        with col_model:
-            n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
-            c_modello = MODELLI_AI[n_modello]
-            
-        col_up, _ = st.columns([1, 2])
-        with col_up:
-            file = st.file_uploader("Fattura PDF", type="pdf", label_visibility="collapsed")
-            if file and st.button("🚀 Analizza PDF", type="primary"):
-                with st.spinner("Analisi in corso..."):
-                    reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
-                    res = chiedi_a_gemini(text, c_modello)
-                    if res:
-                        for p in res:
-                            k = p.get('sci','').upper().strip()
-                            if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
-                            # 4. Date vuote di default
-                            p['scadenza'] = ""
-                            p['conf'] = ""
-                            p['prezzo'] = ""
-                        st.session_state.prodotti = res
-                        st.rerun()
-
+        n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
+        file = st.file_uploader("Fattura PDF", type="pdf")
+        if file and st.button("🚀 Analizza PDF", type="primary"):
+            reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
+            res = chiedi_a_gemini(text, MODELLI_AI[n_modello])
+            if res:
+                for p in res:
+                    k = p.get('sci','').upper().strip()
+                    if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
+                    p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
+                st.session_state.prodotti = res; st.rerun()
     with tab2:
-        if st.button("➕ Crea Nuova Etichetta", type="secondary"):
-            p_vuoto = {
-                "nome": "NUOVO PRODOTTO", "sci": "", "lotto": "",
-                "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA",
-                "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""
-            }
-            st.session_state.prodotti = [p_vuoto]
+        if st.button("➕ Crea Nuova Etichetta"):
+            st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""}]
             st.rerun()
-
 else:
-    # 5. RITORNO DEL MESSAGGIO DI SUCCESSO (PALLINO VERDE)
-    st.success(f"✅ Analisi completata: trovati {len(st.session_state.prodotti)} prodotti!")
-    
-    c_inf, c_cl = st.columns([5, 1])
-    with c_inf:
-        st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
-    with c_cl:
+    st.success(f"✅ Trovati {len(st.session_state.prodotti)} prodotti!")
+    col_dl, col_cl = st.columns([5, 1])
+    with col_dl: st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
+    with col_cl:
         if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
 
     for i, p in enumerate(st.session_state.prodotti):
@@ -199,29 +174,22 @@ else:
             c_h1, c_h2 = st.columns([4, 1])
             with c_h1: p['nome'] = st.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}")
             with c_h2: st.download_button("⬇️ PDF", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_{i}")
-
             c1, c2, c3 = st.columns(3)
             p['sci'] = c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
             p['lotto'] = c2.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
             p['metodo'] = c3.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
-
             c4, c5, c6 = st.columns(3)
             p['zona'] = c4.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
             p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
             if p['metodo'] == "PESCATO":
                 a_curr = p.get('attrezzo', '')
-                a_idx = 0
-                if a_curr in LISTA_ATTREZZI: a_idx = LISTA_ATTREZZI.index(a_curr)
+                a_idx = LISTA_ATTREZZI.index(a_curr) if a_curr in LISTA_ATTREZZI else 0
                 p['attrezzo'] = c6.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
-            else:
-                p['attrezzo'] = ""; c6.empty()
-
+            else: p['attrezzo'] = ""; c6.empty()
             c7, c8, c9 = st.columns(3)
             p['prezzo'] = c7.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
             p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
             p['conf'] = c9.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
-
             st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=380)
             if p['nome'] and p['sci']: st.session_state.learned_map[p['sci'].upper().strip()] = p['nome']
-
     salva_memoria(st.session_state.learned_map)
