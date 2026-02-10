@@ -42,7 +42,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGICA BACKEND (PROMPT POTENZIATO) ---
+# --- 2. LOGICA BACKEND (TRADUTTORE SIGLE FORNITORI) ---
 MEMORIA_FILE = "memoria_nomi.json"
 def carica_memoria():
     if os.path.exists(MEMORIA_FILE):
@@ -65,23 +65,25 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        # PROMPT AGGIORNATO PER EVITARE "ALLEVATO" DI DEFAULT
+        # PROMPT ULTRA-SPECIFICO PER LE SIGLE DELLA FATTURA
         prompt = f"""
-        Analizza questa fattura ittica e restituisci un array JSON di oggetti.
-        REGOLE TASSATIVE:
-        1. Se leggi 'pescato', 'zona fao', 'attrezzo', o nomi di reti/ami, il metodo DEVE essere 'PESCATO'.
-        2. Non mettere 'ALLEVATO' a meno che non sia scritto esplicitamente.
-        3. Cerca bene l'attrezzo di pesca (es. reti da traino, ami, ecc.).
-        4. Campi richiesti: nome, sci (scientifico), lotto, metodo (PESCATO o ALLEVATO), zona (solo codice FAO), origine (Nazione), attrezzo, conf (GG/MM/AAAA).
+        Analizza questa fattura ittica. Sii estremamente preciso con queste regole:
+        1. METODO: Se leggi 'AI' o 'Acquacoltura' o 'Allevato', il metodo è 'ALLEVATO'. Il Salmone con 'AI' è SEMPRE ALLEVATO.
+        2. ATTREZZI (Sigle Tecniche):
+           - Se leggi 'RDT' -> l'attrezzo è 'Reti da traino'.
+           - Se leggi 'LM' o 'EF' -> l'attrezzo è 'Ami e palangari'.
+           - Se leggi 'GNS' -> l'attrezzo è 'Reti da posta'.
+        3. Se non trovi sigle ma leggi 'Pescato', metti metodo 'PESCATO'.
+        4. Campi richiesti: nome, sci (nome scientifico), lotto, metodo (PESCATO o ALLEVATO), zona (es. 37.2.1), origine (Nazione), attrezzo (scegli tra quelli della lista sopra), conf.
         
-        Testo fattura: {testo_pdf}
+        Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA (INALTERATO) ---
+# --- 3. MOTORE DI STAMPA (LAYOUT FINALE CONSERVATO) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
