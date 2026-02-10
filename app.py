@@ -26,26 +26,16 @@ MODELLI_AI = {
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
-    
-    /* Box prodotti */
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 20px;
     }
-    
-    /* Input */
     input[type="text"] { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
-    
-    /* Titolo */
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
-    
-    /* Bottone Rullino Rosso */
     div.stDownloadButton > button {
         background-color: #FF4B4B !important; color: white !important; font-size: 18px !important;
         padding: 0.8rem 2rem !important; border: none !important; border-radius: 8px !important;
         box-shadow: 0 4px 10px rgba(255, 75, 75, 0.4);
     }
-    
-    /* >>> MODIFICA TABS GIGANTI <<< */
     button[data-baseweb="tab"] {
         font-size: 26px !important;
         font-weight: 700 !important;
@@ -84,7 +74,7 @@ def chiedi_a_gemini(testo_pdf, model_name):
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA ---
+# --- 3. MOTORE DI STAMPA (AGGIORNATO PUNTI 1, 2, 3) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -99,19 +89,19 @@ def disegna_su_pdf(pdf, p):
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     
-    # Nome
+    # 2. Nome Commerciale (Aumentato dimensione)
     pdf.set_y(8)
-    pdf.set_font("helvetica", "B", 15)
-    pdf.multi_cell(w_full, 6, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
+    pdf.set_font("helvetica", "B", 18) 
+    pdf.multi_cell(w_full, 7, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
     
     # Scientifico
-    pdf.set_y(19)
+    pdf.set_y(22)
     sci = pulisci_testo(p.get('sci',''))
     pdf.set_font("helvetica", "I", 10)
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
     # Dati Tecnici
-    pdf.set_y(27)
+    pdf.set_y(29)
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci_testo(p.get('zona', ''))
     origine = pulisci_testo(p.get('origine', ''))
@@ -125,23 +115,22 @@ def disegna_su_pdf(pdf, p):
     
     pdf.set_font("helvetica", "", 9)
     pdf.multi_cell(w_full, 4, testo_origine, 0, 'C')
-    
     pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
 
-    # Prezzo
+    # 3. Prezzo (Aumentato di "un bel po'")
     if str(p.get('prezzo', '')).strip():
-        pdf.set_y(40)
-        pdf.set_font("helvetica", "B", 13)
-        pdf.cell(w_full, 6, f"EUR/Kg: {p.get('prezzo','')}", 0, 1, 'C')
+        pdf.set_y(41)
+        pdf.set_font("helvetica", "B", 22) 
+        pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
 
-    # Lotto
-    pdf.set_y(48)
+    # 1. Lotto (Box fisso e largo per evitare tagli)
+    pdf.set_y(50)
     pdf.set_font("helvetica", "B", 11)
-    pdf.set_x(12.5) 
-    pdf.cell(75, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
+    pdf.set_x(5) 
+    pdf.cell(90, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
     
     # Date
-    pdf.set_y(57)
+    pdf.set_y(59)
     pdf.set_font("helvetica", "", 7)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
 
@@ -158,10 +147,7 @@ def converti_pdf_in_immagine(pdf_bytes):
 # --- 4. INTERFACCIA ---
 st.title("⚓ FishLabel AI Pro")
 
-# --- LOGICA IBRIDA ---
 if not st.session_state.get("prodotti"):
-    
-    # TABS GIGANTI
     tab1, tab2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
     
     with tab1:
@@ -181,26 +167,27 @@ if not st.session_state.get("prodotti"):
                         for p in res:
                             k = p.get('sci','').upper().strip()
                             if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
-                            p['scadenza'] = (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y")
-                            if not p.get('conf'): p['conf'] = datetime.now().strftime("%d/%m/%Y")
+                            # 4. Date vuote di default
+                            p['scadenza'] = ""
+                            p['conf'] = ""
                             p['prezzo'] = ""
                         st.session_state.prodotti = res
                         st.rerun()
 
     with tab2:
-        st.write("### Crea etichetta vuota")
         if st.button("➕ Crea Nuova Etichetta", type="secondary"):
             p_vuoto = {
                 "nome": "NUOVO PRODOTTO", "sci": "", "lotto": "",
                 "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA",
-                "attrezzo": "", "conf": datetime.now().strftime("%d/%m/%Y"),
-                "scadenza": (datetime.now() + timedelta(days=5)).strftime("%d/%m/%Y"), "prezzo": ""
+                "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""
             }
             st.session_state.prodotti = [p_vuoto]
             st.rerun()
 
 else:
-    # --- EDITOR ---
+    # 5. RITORNO DEL MESSAGGIO DI SUCCESSO (PALLINO VERDE)
+    st.success(f"✅ Analisi completata: trovati {len(st.session_state.prodotti)} prodotti!")
+    
     c_inf, c_cl = st.columns([5, 1])
     with c_inf:
         st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf", "application/pdf")
@@ -221,7 +208,6 @@ else:
             c4, c5, c6 = st.columns(3)
             p['zona'] = c4.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
             p['origine'] = c5.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
-            
             if p['metodo'] == "PESCATO":
                 a_curr = p.get('attrezzo', '')
                 a_idx = 0
