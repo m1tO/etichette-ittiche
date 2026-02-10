@@ -71,7 +71,7 @@ def chiedi_a_gemini(testo_pdf, model_name):
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA (PRECISIONE MILLIMETRICA) ---
+# --- 3. MOTORE DI STAMPA ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -81,24 +81,20 @@ def disegna_su_pdf(pdf, p):
     pdf.set_margins(4, 3, 4)
     w_full = 92
     
-    # 1. Intestazione
     pdf.set_y(3)
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     
-    # 2. Nome Commerciale
-    pdf.set_y(7) # Alzato leggermente
+    pdf.set_y(7)
     pdf.set_font("helvetica", "B", 18)
     pdf.multi_cell(w_full, 7, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
     
-    # 3. Nome Scientifico (AVVICINATO AL NOME)
-    pdf.set_y(16) # Prima era 22
+    pdf.set_y(16)
     sci = pulisci_testo(p.get('sci',''))
     pdf.set_font("helvetica", "I", 10)
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
     
-    # 4. Blocco Origine (ALZATO)
-    pdf.set_y(23) # Prima era 29
+    pdf.set_y(23)
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci_testo(p.get('zona', ''))
     origine = pulisci_testo(p.get('origine', ''))
@@ -114,20 +110,17 @@ def disegna_su_pdf(pdf, p):
     pdf.multi_cell(w_full, 4, testo, 0, 'C')
     pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
 
-    # 5. Prezzo (ALZATO)
     if str(p.get('prezzo', '')).strip():
-        pdf.set_y(36) # Prima era 41
+        pdf.set_y(36)
         pdf.set_font("helvetica", "B", 22)
         pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
 
-    # 6. Lotto (ALZATO DA TERRA)
-    pdf.set_y(46) # Prima era 50
+    pdf.set_y(46)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_x(5)
     pdf.cell(90, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
     
-    # 7. Date (PIU SPAZIO DAL BORDO)
-    pdf.set_y(56) # Prima era 59, ora ha più margine dal fondo (62mm totale)
+    pdf.set_y(56)
     pdf.set_font("helvetica", "", 8)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
 
@@ -150,14 +143,16 @@ if not st.session_state.get("prodotti"):
         n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
         file = st.file_uploader("Fattura PDF", type="pdf")
         if file and st.button("🚀 Analizza PDF", type="primary"):
-            reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
-            res = chiedi_a_gemini(text, MODELLI_AI[n_modello])
-            if res:
-                for p in res:
-                    k = p.get('sci','').upper().strip()
-                    if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
-                    p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
-                st.session_state.prodotti = res; st.rerun()
+            # --- RITORNO DELLO SPINNER ---
+            with st.spinner("Analisi in corso..."):
+                reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
+                res = chiedi_a_gemini(text, MODELLI_AI[n_modello])
+                if res:
+                    for p in res:
+                        k = p.get('sci','').upper().strip()
+                        if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
+                        p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
+                    st.session_state.prodotti = res; st.rerun()
     with tab2:
         if st.button("➕ Crea Nuova Etichetta"):
             st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""}]
