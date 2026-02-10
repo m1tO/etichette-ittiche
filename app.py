@@ -42,7 +42,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGICA BACKEND (TRADUTTORE SIGLE FORNITORI) ---
+# --- 2. LOGICA BACKEND (SNELLITA PER STABILITÀ) ---
 MEMORIA_FILE = "memoria_nomi.json"
 def carica_memoria():
     if os.path.exists(MEMORIA_FILE):
@@ -61,29 +61,34 @@ if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
 def chiedi_a_gemini(testo_pdf, model_name):
-    if not api_key: return []
+    if not api_key: 
+        st.error("Manca l'API Key!")
+        return []
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        # PROMPT ULTRA-SPECIFICO PER LE SIGLE DELLA FATTURA
+        # Prompt semplificato per evitare crash
         prompt = f"""
-        Analizza questa fattura ittica. Sii estremamente preciso con queste regole:
-        1. METODO: Se leggi 'AI' o 'Acquacoltura' o 'Allevato', il metodo è 'ALLEVATO'. Il Salmone con 'AI' è SEMPRE ALLEVATO.
-        2. ATTREZZI (Sigle Tecniche):
-           - Se leggi 'RDT' -> l'attrezzo è 'Reti da traino'.
-           - Se leggi 'LM' o 'EF' -> l'attrezzo è 'Ami e palangari'.
-           - Se leggi 'GNS' -> l'attrezzo è 'Reti da posta'.
-        3. Se non trovi sigle ma leggi 'Pescato', metti metodo 'PESCATO'.
-        4. Campi richiesti: nome, sci (nome scientifico), lotto, metodo (PESCATO o ALLEVATO), zona (es. 37.2.1), origine (Nazione), attrezzo (scegli tra quelli della lista sopra), conf.
-        
+        Analizza la fattura ittica ed estrai un array JSON.
+        REGOLE SIGLE: 
+        - 'RDT' -> 'Reti da traino' (Metodo: PESCATO)
+        - 'AI' -> 'Metodo: ALLEVATO'
+        - 'LM' o 'EF' -> 'Ami e palangari' (Metodo: PESCATO)
+        Campi: nome, sci, lotto, metodo, zona, origine, attrezzo, conf.
+        Solo il JSON, niente testo extra.
         Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
+        if not response.text:
+            st.warning("L'AI ha risposto vuoto. Riprova.")
+            return []
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
-    except: return []
+    except Exception as e:
+        st.error(f"Errore Analisi: {str(e)}")
+        return []
 
-# --- 3. MOTORE DI STAMPA (LAYOUT FINALE CONSERVATO) ---
+# --- 3. MOTORE DI STAMPA (INALTERATO) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -146,7 +151,7 @@ if not st.session_state.get("prodotti"):
         n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
         file = st.file_uploader("Fattura PDF", type="pdf")
         if file and st.button("🚀 Analizza PDF", type="primary"):
-            with st.spinner("Analisi in corso..."):
+            with st.spinner("Analisi in corso... attendere..."):
                 reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
                 res = chiedi_a_gemini(text, MODELLI_AI[n_modello])
                 if res:
@@ -155,6 +160,8 @@ if not st.session_state.get("prodotti"):
                         if k in st.session_state.learned_map: p['nome'] = st.session_state.learned_map[k]
                         p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
                     st.session_state.prodotti = res; st.rerun()
+                else:
+                    st.error("Non sono riuscito a estrarre i dati. Riprova con un altro modello AI.")
     with tab2:
         if st.button("➕ Crea Nuova Etichetta"):
             st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""}]
