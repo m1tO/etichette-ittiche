@@ -42,7 +42,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGICA BACKEND ---
+# --- 2. LOGICA BACKEND (PROMPT POTENZIATO) ---
 MEMORIA_FILE = "memoria_nomi.json"
 def carica_memoria():
     if os.path.exists(MEMORIA_FILE):
@@ -65,13 +65,23 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"Estrai JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo, conf. Testo: {testo_pdf}"
+        # PROMPT AGGIORNATO PER EVITARE "ALLEVATO" DI DEFAULT
+        prompt = f"""
+        Analizza questa fattura ittica e restituisci un array JSON di oggetti.
+        REGOLE TASSATIVE:
+        1. Se leggi 'pescato', 'zona fao', 'attrezzo', o nomi di reti/ami, il metodo DEVE essere 'PESCATO'.
+        2. Non mettere 'ALLEVATO' a meno che non sia scritto esplicitamente.
+        3. Cerca bene l'attrezzo di pesca (es. reti da traino, ami, ecc.).
+        4. Campi richiesti: nome, sci (scientifico), lotto, metodo (PESCATO o ALLEVATO), zona (solo codice FAO), origine (Nazione), attrezzo, conf (GG/MM/AAAA).
+        
+        Testo fattura: {testo_pdf}
+        """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA ---
+# --- 3. MOTORE DI STAMPA (INALTERATO) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -80,46 +90,37 @@ def disegna_su_pdf(pdf, p):
     pdf.add_page()
     pdf.set_margins(4, 3, 4)
     w_full = 92
-    
     pdf.set_y(3)
     pdf.set_font("helvetica", "B", 8)
     pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
-    
     pdf.set_y(7)
     pdf.set_font("helvetica", "B", 18)
     pdf.multi_cell(w_full, 7, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
-    
     pdf.set_y(16)
     sci = pulisci_testo(p.get('sci',''))
     pdf.set_font("helvetica", "I", 10)
     pdf.multi_cell(w_full, 4, f"({sci})", 0, 'C')
-    
     pdf.set_y(23)
     metodo = str(p.get('metodo', 'PESCATO')).upper()
     zona = pulisci_testo(p.get('zona', ''))
     origine = pulisci_testo(p.get('origine', ''))
     attrezzo = pulisci_testo(p.get('attrezzo', ''))
-    
     pdf.set_font("helvetica", "", 9)
     if "ALLEVATO" in metodo:
         testo = f"ALLEVATO IN: {origine.upper()} (Zona: {zona.upper()})"
     else:
         attr = f" CON {attrezzo.upper()}" if attrezzo and "SCONOSCIUTO" not in attrezzo.upper() else ""
         testo = f"PESCATO{attr}\nZONA: {zona.upper()} - {origine.upper()}"
-    
     pdf.multi_cell(w_full, 4, testo, 0, 'C')
     pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
-
     if str(p.get('prezzo', '')).strip():
         pdf.set_y(36)
         pdf.set_font("helvetica", "B", 22)
         pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
-
     pdf.set_y(46)
     pdf.set_font("helvetica", "B", 11)
     pdf.set_x(5)
     pdf.cell(90, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
-    
     pdf.set_y(56)
     pdf.set_font("helvetica", "", 8)
     pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
@@ -143,7 +144,6 @@ if not st.session_state.get("prodotti"):
         n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
         file = st.file_uploader("Fattura PDF", type="pdf")
         if file and st.button("🚀 Analizza PDF", type="primary"):
-            # --- RITORNO DELLO SPINNER ---
             with st.spinner("Analisi in corso..."):
                 reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
                 res = chiedi_a_gemini(text, MODELLI_AI[n_modello])
