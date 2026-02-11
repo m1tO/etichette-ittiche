@@ -36,12 +36,18 @@ st.markdown("""
         background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 20px;
     }
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
-    button[data-baseweb="tab"] { font-size: 22px !important; font-weight: 700 !important; }
+    
+    /* Font Schede (Tab) Fissato e Leggibile */
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 20px !important; 
+        font-weight: 600 !important;
+        color: #4facfe !important;
+    }
     .stButton > button { width: 100%; border-radius: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGICA AI ---
+# --- 2. LOGICA AI (VERSIONE POTENZIATA) ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -50,14 +56,14 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"""Analizza fattura ittica. REGOLE: AI->ALLEVATO, RDT->Reti da traino, LM/EF->Ami e palangari. 
+        prompt = f"""Analizza fattura. REGOLE: AI->ALLEVATO, RDT->Reti da traino, LM/EF->Ami e palangari. 
         JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"""
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA ---
+# --- 3. MOTORE STAMPA ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -88,7 +94,7 @@ def converti_pdf_in_immagine(pdf_bytes):
     return doc.load_page(0).get_pixmap(dpi=120).tobytes("png")
 
 # --- 4. INTERFACCIA ---
-tab_et, tab_mag, tab_gastro = st.tabs(["🏷️ ETICHETTE", "📦 MAGAZZINO", "👨‍🍳 GASTROMIA"])
+tab_et, tab_mag, tab_gastro = st.tabs(["🏷️ ETICHETTE", "📦 MAGAZZINO", "👨‍🍳 GASTRONOMIA"])
 
 with tab_et:
     if not st.session_state.get("prodotti"):
@@ -147,31 +153,21 @@ with tab_mag:
     st.subheader("📋 Registro Materie Prime")
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Visualizzazione Tabella Ordinata con Nomi Colonne Intelligenti
     dati = c.execute("SELECT id, data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
     
     if dati:
-        # Trasformiamo in lista di dizionari per dare i nomi alle colonne
-        display_data = []
-        for d in dati:
-            display_data.append({
-                "ID": d[0],
-                "Data Carico": d[1],
-                "Prodotto": d[2],
-                "Lotto": d[3],
-                "Metodo": d[4],
-                "Origine": d[5]
-            })
-        
-        # Tabella con intestazioni vere
+        display_data = [{"Data Carico": d[1], "Prodotto": d[2], "Lotto": d[3], "Metodo": d[4], "Origine": d[5]} for d in dati]
         st.dataframe(display_data, use_container_width=True, hide_index=True)
         
         st.divider()
-        st.write("🗑️ **Area Rimozione**")
-        col_id, col_btn = st.columns([1, 4])
-        id_da_eliminare = col_id.number_input("Inserisci ID da eliminare", min_value=1, step=1, key="id_del")
-        if col_btn.button("❌ ELIMINA RIGA SELEZIONATA", type="secondary"):
-            c.execute("DELETE FROM magazzino WHERE id=?", (id_da_eliminare,))
+        st.write("🗑️ **Area Rimozione Selettiva**")
+        # Selezione riga tramite Dropdown invece di ID manuale
+        opzioni_del = {f"{d[1]} - {d[2]} (Lotto: {d[3]})": d[0] for d in dati}
+        scelta = st.selectbox("Seleziona il prodotto da eliminare dal registro:", list(opzioni_del.keys()))
+        
+        if st.button("❌ ELIMINA PRODOTTO SELEZIONATO", type="secondary"):
+            id_to_del = opzioni_del[scelta]
+            c.execute("DELETE FROM magazzino WHERE id=?", (id_to_del,))
             conn.commit(); conn.close(); st.rerun()
             
         if st.button("🚨 SVUOTA TUTTO IL REGISTRO"):
