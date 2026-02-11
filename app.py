@@ -153,7 +153,6 @@ with tab_mag:
     df = pd.read_sql_query("SELECT id, data_carico as Data, nome as Prodotto, lotto as Lotto FROM magazzino ORDER BY id DESC", conn)
     
     if not df.empty:
-        # SISTEMA DI SELEZIONE COMPATIBILE E VELOCE
         st.write("Seleziona i prodotti per l'azione:")
         df_with_selections = df.copy()
         df_with_selections.insert(0, "Seleziona", False)
@@ -174,18 +173,64 @@ with tab_mag:
     conn.close()
 
 with tab_gastro:
-    st.subheader("👨‍🍳 Registro Gastronomia")
-    c1, c2 = st.columns(2)
-    with c1:
-        piatto = st.text_input("Preparazione")
-        conn = sqlite3.connect(DB_FILE); materie = conn.execute("SELECT nome, lotto FROM magazzino ORDER BY id DESC").fetchall(); conn.close()
-        ingr = st.multiselect("Ingredienti", [f"{m[0]} (Lotto: {m[1]})" for m in materie])
-        if st.button("📝 Registra"):
-            if piatto and ingr:
-                conn = sqlite3.connect(DB_FILE); c = conn.cursor(); c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod) VALUES (?,?,?)", (piatto, ", ".join(ingr), datetime.now().strftime("%d/%m/%Y")))
-                conn.commit(); conn.close(); st.rerun()
-    with c2:
-        conn = sqlite3.connect(DB_FILE); st.write("Storico produzioni:"); storico = conn.execute("SELECT data_prod, piatto, ingredienti FROM produzioni ORDER BY id DESC LIMIT 5").fetchall()
-        for s in storico:
-            with st.expander(f"📅 {s[0]} - {s[1]}"): st.write(f"Ingredienti: {s[2]}")
+    st.subheader("👨‍🍳 Gestione Gastronomia")
+    
+    # SOTTO-TAB PER PULIZIA INTERFACCIA
+    sub_nuovo, sub_storico = st.tabs(["📝 NUOVA PRODUZIONE", "📜 STORICO & MODIFICA"])
+    
+    with sub_nuovo:
+        col_dx, col_sx = st.columns(2)
+        with col_dx:
+            piatto_nome = st.text_input("Nome Preparazione", placeholder="es. Insalata di Mare")
+            conn = sqlite3.connect(DB_FILE)
+            materie = conn.execute("SELECT nome, lotto FROM magazzino ORDER BY id DESC").fetchall()
+            conn.close()
+            ingredienti_sel = st.multiselect("Seleziona Ingredienti dal Magazzino", [f"{m[0]} (Lotto: {m[1]})" for m in materie])
+            
+            if st.button("✅ Registra Produzione", type="primary"):
+                if piatto_nome and ingredienti_sel:
+                    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                    c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod) VALUES (?,?,?)", 
+                              (piatto_nome, ", ".join(ingredienti_sel), datetime.now().strftime("%d/%m/%Y")))
+                    conn.commit(); conn.close(); st.success("Registrato!"); st.rerun()
+                else: st.error("Inserisci nome e almeno un ingrediente.")
+
+    with sub_storico:
+        conn = sqlite3.connect(DB_FILE)
+        df_prod = pd.read_sql_query("SELECT * FROM produzioni ORDER BY id DESC", conn)
         conn.close()
+        
+        if not df_prod.empty:
+            for i, row in df_prod.iterrows():
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    c1.markdown(f"**{row['piatto']}**")
+                    c1.caption(f"📅 {row['data_prod']} | 🐟 {row['ingredienti']}")
+                    
+                    # Tasto MODIFICA (apre un piccolo form)
+                    if c2.button("✏️ Modifica", key=f"mod_{row['id']}"):
+                        st.session_state[f"edit_mode_{row['id']}"] = True
+                    
+                    # Tasto ELIMINA
+                    if c3.button("🗑️ Elimina", key=f"del_prod_{row['id']}"):
+                        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                        c.execute("DELETE FROM produzioni WHERE id=?", (row['id'],))
+                        conn.commit(); conn.close(); st.rerun()
+                    
+                    # FORM DI MODIFICA (appare solo se cliccato Modifica)
+                    if st.session_state.get(f"edit_mode_{row['id']}", False):
+                        with st.form(key=f"form_mod_{row['id']}"):
+                            nuovo_nome = st.text_input("Nuovo Nome", value=row['piatto'])
+                            nuovi_ing = st.text_area("Modifica Ingredienti", value=row['ingredienti'])
+                            f1, f2 = st.columns(2)
+                            if f1.form_submit_button("Salva"):
+                                conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                                c.execute("UPDATE produzioni SET piatto=?, ingredienti=? WHERE id=?", (nuovo_nome, nuovi_ing, row['id']))
+                                conn.commit(); conn.close()
+                                st.session_state[f"edit_mode_{row['id']}"] = False
+                                st.rerun()
+                            if f2.form_submit_button("Annulla"):
+                                st.session_state[f"edit_mode_{row['id']}"] = False
+                                st.rerun()
+        else:
+            st.info("Ancora nessuna produzione registrata.")
