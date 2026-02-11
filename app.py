@@ -33,14 +33,17 @@ st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 15px; margin-bottom: 25px;
+        background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 15px; margin-bottom: 20px;
     }
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
+    
+    /* Font Schede (Tab) */
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 20px !important; font-weight: 600 !important; color: #4facfe !important;
     }
-    .stTextInput input, .stSelectbox select { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
-    .stButton > button { width: 100%; border-radius: 6px; font-weight: bold !important; height: 38px; }
+    
+    /* Bottoni compatti */
+    .stButton > button { width: 100%; border-radius: 6px; font-weight: bold !important; height: 35px; font-size: 14px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,52 +100,56 @@ with tab_et:
     if not st.session_state.get("prodotti"):
         s1, s2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
         with s1:
-            file = st.file_uploader("Fattura PDF", type="pdf")
+            file = st.file_uploader("Carica PDF", type="pdf")
             if file and st.button("🚀 Analizza"):
-                with st.spinner("Analisi..."):
+                with st.spinner("Analisi in corso..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
                     res = chiedi_a_gemini(text, "gemini-2.5-flash")
                     if res:
                         for p in res: p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
                         st.session_state.prodotti = res; st.rerun()
+        with s2:
+            if st.button("➕ Crea Nuova"):
+                st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]; st.rerun()
     else:
-        st.success(f"✅ Trovati {len(st.session_state.prodotti)} prodotti")
-        c_a1, c_a2, c_a3 = st.columns([2,2,1])
-        with c_a1: st.download_button("🖨️ RULLINO COMPLETO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
-        with c_a2:
-            if st.button("📥 SALVA TUTTO IN REGISTRO", type="primary"):
+        # BARRA COMANDI SUPERIORE BILANCIATA
+        c_rullino, c_carica, c_chiudi = st.columns([1, 2, 1])
+        with c_rullino: 
+            st.download_button("🖨️ RULLINO COMPLETO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
+        with c_carica:
+            if st.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
                 conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
                 for pr in st.session_state.prodotti:
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
                               (pr['nome'], pr.get('sci'), pr.get('lotto'), pr.get('metodo'), pr.get('zona'), pr.get('origine'), dt))
                 conn.commit(); conn.close(); st.toast("✅ Magazzino aggiornato!")
-        with c_a3:
+        with c_chiudi:
             if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
         
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
-                # RIGA COMANDI IN ALTO A DESTRA (ORDINATI)
-                r_top_left, r_top_right = st.columns([4, 2])
-                p['nome'] = r_top_left.text_input("Nome Commerciale", p.get('nome','').upper(), key=f"n_{i}")
+                # INTESTAZIONE SCHEDA PRODOTTO
+                r1_left, r1_right = st.columns([4.5, 1.5])
+                p['nome'] = r1_left.text_input("Nome Commerciale", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
                 
-                # Bottoni Carica e Stampa affiancati
-                c_btn1, c_btn2 = r_top_right.columns(2)
+                # Tasti Carica e Stampa vicini
+                c_btn1, c_btn2 = r1_right.columns(2)
                 if c_btn1.button("📥 Carica", key=f"sv_{i}"):
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
-                    conn.commit(); conn.close(); st.toast("✅ In magazzino!")
+                    conn.commit(); conn.close(); st.toast("✅ Caricato!")
                 c_btn2.download_button("🖨️ Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
 
-                # RIGA 2: LOTTO E DATI TECNICI
-                r2_c1, r2_c2, r2_c3, r2_c4 = st.columns([2, 2, 1, 1])
+                # RIGA 2: DATI TECNICI
+                r2_c1, r2_c2, r2_c3, r2_c4 = st.columns([1.5, 2, 1, 1])
                 p['lotto'] = r2_c1.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
                 p['sci'] = r2_c2.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_c3.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
-                p['zona'] = r2_c4.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
+                p['zona'] = r2_c4.text_input("Zona", p.get('zona',''), key=f"z_{i}")
 
                 # RIGA 3: ORIGINE, PREZZO E DATE
-                r3_c1, r3_c2, r3_c3, r3_c4, r3_c5 = st.columns([2, 1, 1, 1, 1])
+                r3_c1, r3_c2, r3_c3, r3_c4, r3_c5 = st.columns([1.5, 1.5, 1, 1, 1])
                 p['origine'] = r3_c1.text_input("Nazione", p.get('origine',''), key=f"o_{i}")
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
@@ -152,10 +159,10 @@ with tab_et:
                 p['conf'] = r3_c4.text_input("Conf.", p.get('conf',''), key=f"cf_{i}")
                 p['scadenza'] = r3_c5.text_input("Scad.", p.get('scadenza',''), key=f"sc_{i}")
 
-                # ANTEPRIMA (FINE SCHEDA)
-                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=280)
+                # ANTEPRIMA (SEGNALE DI FINE)
+                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=250)
 
-# --- TAB MAGAZZINO E GASTRO (INVARIARE) ---
+# --- TAB MAGAZZINO E GASTRO ---
 with tab_mag:
     st.subheader("📋 Registro Tracciabilità")
     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
