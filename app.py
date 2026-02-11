@@ -22,15 +22,10 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS produzioni 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, piatto TEXT, ingredienti TEXT, 
                   data_prod TEXT, lotto_interno TEXT)''')
-    # Controllo per aggiornare colonne esistenti
     cursor = c.execute('PRAGMA table_info(magazzino)')
     cols = [row[1] for row in cursor.fetchall()]
     if 'fattura_rif' not in cols:
         c.execute("ALTER TABLE magazzino ADD COLUMN fattura_rif TEXT")
-    cursor = c.execute('PRAGMA table_info(produzioni)')
-    cols_p = [row[1] for row in cursor.fetchall()]
-    if 'lotto_interno' not in cols_p:
-        c.execute("ALTER TABLE produzioni ADD COLUMN lotto_interno TEXT")
     conn.commit()
     conn.close()
 
@@ -39,44 +34,26 @@ init_db()
 LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"]
 MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
-# --- STILE CSS ---
-st.markdown("""
-<style>
-    .stApp { background-color: #0e1117; color: #fafafa; }
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 15px; margin-bottom: 20px;
-    }
-    h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
-    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        font-size: 20px !important; font-weight: 600 !important; color: #4facfe !important;
-    }
-    button[kind="primary"] { background-color: #28a745 !important; border-color: #28a745 !important; color: white !important; }
-    .stButton > button { border-radius: 6px; font-weight: bold !important; height: 35px; }
-    .stTextInput input, .stSelectbox select { background-color: #1a1c24 !important; border: 1px solid #464b5c !important; color: white !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- 2. LOGICA AI ---
+# --- 2. LOGICA AI (AGGIORNATA PER ESTRARRE FATTURA) ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
 def chiedi_a_gemini(testo_pdf, model_name):
-    if not api_key: return []
+    if not api_key: return {"prodotti": [], "rif_fattura": ""}
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
         prompt = f"""
-        Analizza questa fattura ittica. SEGUI QUESTE REGOLE TASSATIVE:
-        1. SE leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
-        2. SE leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO' -> metodo: 'PESCATO'.
-        3. Assegna l'attrezzo corretto in base alle sigle (RDT=Reti da traino, GNS=Reti da posta, LM=Ami).
-        4. ESTRAI SEMPRE: nome, sci, lotto, metodo, zona, origine, attrezzo.
-        Solo JSON array. Testo: {testo_pdf}
+        Analizza questa fattura ittica. REGOLE:
+        1. Estrai un array di oggetti 'prodotti' con: nome, sci, lotto, metodo, zona, origine, attrezzo.
+        2. Cerca il numero della fattura e la data e crea una stringa 'rif_fattura' (es: 'Fattura N. 123 del 10/02/2026').
+        3. Restituisci SOLO un JSON con queste due chiavi.
+        Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
-    except: return []
+    except: return {"prodotti": [], "rif_fattura": ""}
 
 # --- 3. MOTORE STAMPA ---
 def disegna_su_pdf(pdf, p):
@@ -125,12 +102,17 @@ with tab_et:
             if file and st.button("🚀 Analizza"):
                 with st.spinner("Analisi in corso..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
-                    st.session_state.prodotti = chiedi_a_gemini(text, MODELLI_AI[n_modello]); st.rerun()
+                    risultato = chiedi_a_gemini(text, MODELLI_AI[n_modello])
+                    st.session_state.prodotti = risultato.get("prodotti", [])
+                    st.session_state.rif_fattura_auto = risultato.get("rif_fattura", "")
+                    st.rerun()
         with s2:
             if st.button("➕ Crea Nuova Etichetta"):
-                st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]; st.rerun()
+                st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]
+                st.session_state.rif_fattura_auto = ""; st.rerun()
     else:
-        rif_fattura = st.text_input("📝 Riferimento Fattura (es. N. 10 del 11/02/2026)", placeholder="Inserisci il riferimento fiscale...")
+        # CAMPO AUTO-COMPILATO
+        rif_fattura = st.text_input("📝 Riferimento Fattura (rilevato)", value=st.session_state.get("rif_fattura_auto", ""))
         
         c_rull, c_car_all, c_exit = st.columns([1, 2, 1])
         with c_rull: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
