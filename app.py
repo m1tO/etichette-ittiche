@@ -34,7 +34,7 @@ init_db()
 LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche", ""]
 MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
-# --- 2. LOGICA AI (PROMPT AGGIORNATO PER PRODOTTI NON ITTICI E SCADENZE) ---
+# --- 2. LOGICA AI (PROMPT BLINDATO: FILTRO NON-ALIMENTARI + NO "ALLEVATO" AUTOMATICO) ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -46,20 +46,23 @@ def chiedi_a_gemini(testo_pdf, model_name):
         prompt = f"""
         Analizza questa fattura commerciale e restituisci un JSON con 'prodotti' (array) e 'rif_fattura' (stringa).
 
-        REGOLE PER PRODOTTI ITTICI (PESCE):
-        1. Se leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
-        2. Se leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO', 'RETE' -> metodo: 'PESCATO'.
-        3. Identifica attrezzo (RDT=Reti da traino, etc.).
+        REGOLE DI FILTRO TASSATIVE:
+        1. ESTRAI SOLO prodotti alimentari (pesce, secco, conserve, spezie, olio, etc.).
+        2. SCARTA E IGNORA TUTTO il materiale NON alimentare: guanti, bicchieri, piatti, detersivi, carta, packaging, abbigliamento, attrezzatura.
 
-        REGOLE PER PRODOTTI NON ITTICI (SECCO, CONSERVE, ETC.):
-        1. Se il prodotto NON è ittico (es. Olio, Pomodoro, Sale, Pasta) -> metodo, zona, sci, attrezzo devono essere stringhe VUOTE "".
+        REGOLE PER PRODOTTI ITTICI (PESCE):
+        1. SE leggi chiaramente 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
+        2. SE leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO', 'RETE' -> metodo: 'PESCATO'.
+        3. Se è pesce ma NON vedi sigle, metti metodo: 'PESCATO' come standard, NON mettere 'ALLEVATO' se non ne sei sicuro.
+
+        REGOLE PER PRODOTTI NON ITTICI (POMODORO, OLIO, ETC.):
+        1. Se il prodotto è alimentare ma NON è pesce -> metodo, zona, sci, attrezzo devono essere VUOTI "".
         
         REGOLE GENERALI:
-        1. Estrai sempre: nome, lotto, origine e SCADENZA (cerca date vicino a TMC o Scadenza).
-        2. Per 'rif_fattura': Numero e Data documento.
-        3. NON inventare 'ALLEVATO' se il prodotto è secco o se non ci sono prove.
+        1. Estrai sempre: nome, lotto, origine e SCADENZA (TMC/Scadenza).
+        2. Per 'rif_fattura': Numero e Data documento (es: 'Fattura N. 10 del 11/02/2026').
 
-        Restituisci SOLO JSON. Testo: {testo_pdf}
+        Restituisci SOLO JSON puro. Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
@@ -71,11 +74,8 @@ def disegna_su_pdf(pdf, p):
     pdf.add_page(); pdf.set_margins(4, 3, 4); w_full = 92
     pdf.set_y(3); pdf.set_font("helvetica", "B", 8); pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.set_y(7); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(w_full, 7, str(p.get('nome','')).upper(), 0, 'C')
-    
-    # Se scientifico esiste, lo scrive
     if p.get('sci'):
         pdf.set_y(16); pdf.set_font("helvetica", "I", 10); pdf.multi_cell(w_full, 4, f"({str(p.get('sci',''))})", 0, 'C')
-    
     metodo = str(p.get('metodo', '')).upper()
     pdf.set_y(23); pdf.set_font("helvetica", "", 9)
     if metodo == "ALLEVATO":
@@ -84,8 +84,7 @@ def disegna_su_pdf(pdf, p):
         attr = f" CON {str(p.get('attrezzo','')).upper()}" if p.get('attrezzo') else ""
         testo = f"PESCATO{attr}\nZONA: {p.get('zona','')} - {str(p.get('origine','')).upper()}"
     else:
-        testo = f"ORIGINE: {str(p.get('origine','')).upper()}" # Per prodotti non ittici
-    
+        testo = f"ORIGINE: {str(p.get('origine','')).upper()}"
     pdf.multi_cell(w_full, 4, testo, 0, 'C')
     if p.get('prezzo'):
         pdf.set_y(36); pdf.set_font("helvetica", "B", 22); pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
@@ -131,7 +130,6 @@ with tab_et:
                 st.session_state.rif_fattura_auto = ""; st.rerun()
     else:
         rif_fattura = st.text_input("📝 Riferimento Fattura (rilevato)", value=st.session_state.get("rif_fattura_auto", ""))
-        
         c_rull, c_car_all, c_exit = st.columns([1, 2, 1])
         with c_rull: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         with c_car_all: 
@@ -160,12 +158,10 @@ with tab_et:
                 r2_1, r2_2 = st.columns(2)
                 p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_2.selectbox("Metodo", ["", "PESCATO", "ALLEVATO"], index=0 if not p.get('metodo') else (1 if p['metodo']=="PESCATO" else 2), key=f"m_{i}")
-                
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
                     p['attrezzo'] = st.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
                 else: st.write("")
-                
                 r4_1, r4_2 = st.columns(2); p['origine'] = r4_1.text_input("Nazione", p.get('origine',''), key=f"o_{i}"); p['zona'] = r4_2.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
                 r5_1, r5_2 = st.columns(2); p['conf'] = r5_1.text_input("Conf.", p.get('conf',''), key=f"cf_{i}"); p['scadenza'] = r5_2.text_input("Scad.", p.get('scadenza',''), key=f"sc_{i}")
                 p['prezzo'] = st.text_input("Prezzo €/Kg", p.get('prezzo',''), key=f"pr_{i}")
@@ -233,8 +229,5 @@ with tab_gastro:
                             n_ing = st.text_area("Ingredienti", value=row['ingredienti'])
                             f1, f2 = st.columns(2)
                             if f1.form_submit_button("Salva"):
-                                conn = sqlite3.connect(DB_FILE); c = conn.cursor()
-                                c.execute("UPDATE produzioni SET piatto=?, ingredienti=? WHERE id=?", (n_nome, n_ing, row['id']))
-                                conn.commit(); conn.close(); st.session_state[f"edit_mode_g_{row['id']}"] = False; st.rerun()
-                            if f2.form_submit_button("Annulla"):
-                                st.session_state[f"edit_mode_g_{row['id']}"] = False; st.rerun()
+                                conn = sqlite3.connect(DB_FILE); c = conn.cursor(); c.execute("UPDATE produzioni SET piatto=?, ingredienti=? WHERE id=?", (n_nome, n_ing, row['id'])); conn.commit(); conn.close(); st.session_state[f"edit_mode_g_{row['id']}"] = False; st.rerun()
+                            if f2.form_submit_button("Annulla"): st.session_state[f"edit_mode_g_{row['id']}"] = False; st.rerun()
