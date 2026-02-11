@@ -33,22 +33,14 @@ st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 15px; margin-bottom: 10px;
+        background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 15px; margin-bottom: 25px;
     }
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
-    
-    /* Font Schede (Tab) */
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 20px !important; font-weight: 600 !important; color: #4facfe !important;
     }
-    
-    /* Pulizia Input */
-    .stTextInput input { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
-    
-    /* Bottoni */
-    .stButton > button { width: 100%; border-radius: 8px; font-weight: bold !important; }
-    .btn-download { background-color: #28a745 !important; color: white !important; }
-    .btn-save-all { background-color: #007bff !important; color: white !important; }
+    .stTextInput input, .stSelectbox select { background-color: #1a1c24 !important; color: white !important; border: 1px solid #464b5c !important; }
+    .stButton > button { width: 100%; border-radius: 6px; font-weight: bold !important; height: 45px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,7 +53,7 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"""Analizza fattura. REGOLE: AI->ALLEVATO, RDT->Reti da traino, LM/EF->Ami e palangari. 
+        prompt = f"""Analizza fattura ittica. REGOLE: AI->ALLEVATO, RDT->Reti da traino, LM/EF->Ami e palangari. 
         JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"""
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
@@ -119,9 +111,9 @@ with tab_et:
     else:
         st.success(f"✅ Trovati {len(st.session_state.prodotti)} prodotti")
         c_a1, c_a2, c_a3 = st.columns([2,2,1])
-        with c_a1: st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
+        with c_a1: st.download_button("🖨️ RULLINO COMPLETO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         with c_a2:
-            if st.button("📥 SALVA TUTTO IN MAGAZZINO", type="primary"):
+            if st.button("📥 SALVA TUTTO IN REGISTRO", type="primary"):
                 conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
                 for pr in st.session_state.prodotti:
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
@@ -132,41 +124,39 @@ with tab_et:
         
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
-                # RIGA 1: NOME E LOTTO
+                # RIGA 1: NOME E LOTTO (BOX PROPORZIONATI)
                 r1_c1, r1_c2, r1_c3 = st.columns([3, 2, 1])
-                p['nome'] = r1_c1.text_input("Nome Prodotto", p.get('nome','').upper(), key=f"n_{i}")
+                p['nome'] = r1_c1.text_input("Nome Commerciale", p.get('nome','').upper(), key=f"n_{i}")
                 p['lotto'] = r1_c2.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
                 if r1_c3.button("📥 SALVA", key=f"sv_{i}"):
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
-                    conn.commit(); conn.close(); st.toast("✅ Salvato!")
-                
-                # RIGA 2: SCIENTIFICO, METODO, ZONA
-                r2_c1, r2_c2, r2_c3 = st.columns(3)
+                    conn.commit(); conn.close(); st.toast(f"✅ {p['nome']} salvato!")
+
+                # RIGA 2: DATI TECNICI
+                r2_c1, r2_c2, r2_c3, r2_c4 = st.columns([2, 1, 1, 1])
                 p['sci'] = r2_c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_c2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
                 p['zona'] = r2_c3.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
+                p['origine'] = r2_c4.text_input("Nazione", p.get('origine',''), key=f"o_{i}")
 
-                # RIGA 3: ORIGINE, ATTREZZO, PREZZO
-                r3_c1, r3_c2, r3_c3 = st.columns(3)
-                p['origine'] = r3_c1.text_input("Origine", p.get('origine',''), key=f"o_{i}")
+                # RIGA 3: ATTREZZO E PREZZO
+                r3_c1, r3_c2, r3_c3, r3_c4 = st.columns([2, 1, 1, 1])
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
-                    p['attrezzo'] = r3_c2.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
-                else: r3_c2.empty()
-                p['prezzo'] = r3_c3.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
+                    p['attrezzo'] = r3_c1.selectbox("Attrezzo di Pesca", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
+                else: r3_c1.empty()
+                p['prezzo'] = r3_c2.text_input("Prezzo €/Kg", p.get('prezzo',''), key=f"pr_{i}")
+                p['conf'] = r3_c3.text_input("Conf.", p.get('conf',''), key=f"cf_{i}")
+                p['scadenza'] = r3_c4.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
 
-                # RIGA 4: DATE E ANTEPRIMA
-                r4_c1, r4_c2, r4_c3 = st.columns([1, 1, 2])
-                p['conf'] = r4_c1.text_input("Conf.", p.get('conf',''), key=f"cf_{i}")
-                p['scadenza'] = r4_c2.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
-                with r4_c3:
-                    st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=250)
+                # RIGA 4: ANTEPRIMA (SEGNALE DI FINE SCHEDA)
+                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=280)
 
-# --- TAB MAGAZZINO E GASTRO (INALTERATE LOGICHE) ---
+# --- TAB MAGAZZINO E GASTRO (LOGICA FISSA) ---
 with tab_mag:
-    st.subheader("📋 Registro Materie Prime")
+    st.subheader("📋 Registro Tracciabilità Materie Prime")
     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
     dati = c.execute("SELECT id, data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
     if dati:
@@ -174,25 +164,27 @@ with tab_mag:
         st.dataframe(display_data, use_container_width=True, hide_index=True)
         st.divider()
         opzioni_del = {f"{d[1]} - {d[2]} (Lotto: {d[3]})": d[0] for d in dati}
-        scelta = st.selectbox("Seleziona da eliminare:", list(opzioni_del.keys()))
-        if st.button("❌ ELIMINA SELEZIONATO"):
+        scelta = st.selectbox("Seleziona prodotto da eliminare:", list(opzioni_del.keys()))
+        if st.button("❌ ELIMINA RIGA SELEZIONATA"):
             c.execute("DELETE FROM magazzino WHERE id=?", (opzioni_del[scelta],))
             conn.commit(); conn.close(); st.rerun()
-    else: st.info("Magazzino vuoto.")
+        if st.button("🚨 RESET REGISTRO COMPLETO"):
+            c.execute("DELETE FROM magazzino"); conn.commit(); conn.close(); st.rerun()
+    else: st.info("Il registro è attualmente vuoto.")
     conn.close()
 
 with tab_gastro:
-    st.subheader("👨‍🍳 Registro Produzioni")
+    st.subheader("👨‍🍳 Registro Produzioni Gastronomia")
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        piatto = st.text_input("Nome Piatto")
-        conn = sqlite3.connect(DB_FILE); materie = conn.execute("SELECT nome, lotto, data_carico FROM magazzino ORDER BY id DESC").fetchall()
-        ingredienti = st.multiselect("Ingredienti", [f"{m[0]} (Lotto: {m[1]} - {m[2]})" for m in materie])
-        if st.button("📝 Registra"):
+        piatto = st.text_input("Preparazione (es: Insalata di Polpo)")
+        conn = sqlite3.connect(DB_FILE); materie = conn.execute("SELECT nome, lotto, data_carico FROM magazzino ORDER BY id DESC").fetchall(); conn.close()
+        ingredienti = st.multiselect("Seleziona Ingredienti dai lotti carichi", [f"{m[0]} (Lotto: {m[1]} - {m[2]})" for m in materie])
+        if st.button("📝 Registra Produzione"):
             if piatto and ingredienti:
-                c = conn.cursor(); c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod) VALUES (?,?,?)", (piatto, ", ".join(ingredienti), datetime.now().strftime("%d/%m/%Y")))
-                conn.commit(); st.success("Registrato!"); st.rerun()
-        conn.close()
+                conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod) VALUES (?,?,?)", (piatto, ", ".join(ingredienti), datetime.now().strftime("%d/%m/%Y")))
+                conn.commit(); conn.close(); st.success("Registrato con successo!"); st.rerun()
     with col_g2:
         conn = sqlite3.connect(DB_FILE); prods = conn.execute("SELECT id, data_prod, piatto, ingredienti FROM produzioni ORDER BY id DESC").fetchall()
         for pr in prods:
