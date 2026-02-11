@@ -34,7 +34,29 @@ init_db()
 LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche", ""]
 MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
-# --- 2. LOGICA AI (PROMPT BLINDATO: FILTRO NON-ALIMENTARI + NO "ALLEVATO" AUTOMATICO) ---
+# --- STILE CSS (TASTI CARICA VERDI) ---
+st.markdown("""
+<style>
+    .stApp { background-color: #0e1117; color: #fafafa; }
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+        background-color: #262730; border: 1px solid #464b5c; border-radius: 8px; padding: 15px; margin-bottom: 20px;
+    }
+    h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 20px !important; font-weight: 600 !important; color: #4facfe !important;
+    }
+    /* Forza colore verde per i tasti Carica (primary) */
+    button[kind="primary"] { 
+        background-color: #28a745 !important; 
+        border-color: #28a745 !important; 
+        color: white !important; 
+    }
+    .stButton > button { border-radius: 6px; font-weight: bold !important; height: 35px; }
+    .stTextInput input, .stSelectbox select { background-color: #1a1c24 !important; border: 1px solid #464b5c !important; color: white !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 2. LOGICA AI ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -45,24 +67,19 @@ def chiedi_a_gemini(testo_pdf, model_name):
         model = genai.GenerativeModel(model_name)
         prompt = f"""
         Analizza questa fattura commerciale e restituisci un JSON con 'prodotti' (array) e 'rif_fattura' (stringa).
-
         REGOLE DI FILTRO TASSATIVE:
-        1. ESTRAI SOLO prodotti alimentari (pesce, secco, conserve, spezie, olio, etc.).
-        2. SCARTA E IGNORA TUTTO il materiale NON alimentare: guanti, bicchieri, piatti, detersivi, carta, packaging, abbigliamento, attrezzatura.
-
-        REGOLE PER PRODOTTI ITTICI (PESCE):
-        1. SE leggi chiaramente 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
-        2. SE leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO', 'RETE' -> metodo: 'PESCATO'.
-        3. Se è pesce ma NON vedi sigle, metti metodo: 'PESCATO' come standard, NON mettere 'ALLEVATO' se non ne sei sicuro.
-
-        REGOLE PER PRODOTTI NON ITTICI (POMODORO, OLIO, ETC.):
-        1. Se il prodotto è alimentare ma NON è pesce -> metodo, zona, sci, attrezzo devono essere VUOTI "".
-        
-        REGOLE GENERALI:
-        1. Estrai sempre: nome, lotto, origine e SCADENZA (TMC/Scadenza).
-        2. Per 'rif_fattura': Numero e Data documento (es: 'Fattura N. 10 del 11/02/2026').
-
-        Restituisci SOLO JSON puro. Testo: {testo_pdf}
+        1. ESTRAI SOLO prodotti alimentari.
+        2. SCARTA E IGNORA materiale NON alimentare (guanti, detersivi, packaging, etc.).
+        REGOLE ITTICI:
+        1. SE leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
+        2. SE leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO' -> metodo: 'PESCATO'.
+        3. Se è pesce senza sigle, metti 'PESCATO', NON inventare 'ALLEVATO'.
+        REGOLE NON ITTICI:
+        1. Se NON è pesce -> metodo, zona, sci, attrezzo devono essere VUOTI "".
+        GENERALI:
+        1. Estrai: nome, lotto, origine, SCADENZA.
+        2. 'rif_fattura': Numero e Data documento.
+        Solo JSON puro. Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
@@ -83,8 +100,7 @@ def disegna_su_pdf(pdf, p):
     elif metodo == "PESCATO":
         attr = f" CON {str(p.get('attrezzo','')).upper()}" if p.get('attrezzo') else ""
         testo = f"PESCATO{attr}\nZONA: {p.get('zona','')} - {str(p.get('origine','')).upper()}"
-    else:
-        testo = f"ORIGINE: {str(p.get('origine','')).upper()}"
+    else: testo = f"ORIGINE: {str(p.get('origine','')).upper()}"
     pdf.multi_cell(w_full, 4, testo, 0, 'C')
     if p.get('prezzo'):
         pdf.set_y(36); pdf.set_font("helvetica", "B", 22); pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
@@ -129,11 +145,14 @@ with tab_et:
                 st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "", "zona": "", "origine": "ITALIA", "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""}]
                 st.session_state.rif_fattura_auto = ""; st.rerun()
     else:
+        # INFO PRODOTTI TROVATI (RIPRISTINATA)
+        st.success(f"📊 Analisi completata: Trovati {len(st.session_state.prodotti)} prodotti alimentari.")
         rif_fattura = st.text_input("📝 Riferimento Fattura (rilevato)", value=st.session_state.get("rif_fattura_auto", ""))
+        
         c_rull, c_car_all, c_exit = st.columns([1, 2, 1])
         with c_rull: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         with c_car_all: 
-            if st.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
+            if st.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"): # Diventa verde tramite CSS
                 conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
                 for pr in st.session_state.prodotti:
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico, fattura_rif) VALUES (?,?,?,?,?,?,?,?)",
@@ -148,7 +167,7 @@ with tab_et:
                 p['nome'] = r1_left.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
                 p['lotto'] = r1_mid.text_input("Lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
                 btn_cols = r1_right.columns([1, 1], gap="small")
-                if btn_cols[0].button("Carica", key=f"sv_{i}", type="primary"):
+                if btn_cols[0].button("Carica", key=f"sv_{i}", type="primary"): # Verde tramite CSS
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico, fattura_rif) VALUES (?,?,?,?,?,?,?,?)",
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y"), rif_fattura))
