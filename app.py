@@ -16,11 +16,9 @@ DB_FILE = "tracciabilita.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Tabella per il pesce caricato dalle fatture
     c.execute('''CREATE TABLE IF NOT EXISTS magazzino 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, sci TEXT, lotto TEXT, 
                   metodo TEXT, zona TEXT, origine TEXT, data_carico TEXT)''')
-    # Tabella per le produzioni della cucina
     c.execute('''CREATE TABLE IF NOT EXISTS produzioni 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, piatto TEXT, ingredienti TEXT, data_prod TEXT)''')
     conn.commit()
@@ -40,13 +38,10 @@ st.markdown("""
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
     button[data-baseweb="tab"] { font-size: 22px !important; font-weight: 700 !important; }
     .stButton > button { width: 100%; border-radius: 8px; }
-    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        font-size: 24px !important; font-weight: bold !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGICA AI POTENZIATA ---
+# --- 2. LOGICA AI ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -55,54 +50,32 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        # Prompt con dizionario sigle integrato per evitare errori Allevato/Pescato
-        prompt = f"""
-        Analizza questa fattura ittica ed estrai un array JSON di oggetti.
-        REGOLE TASSATIVE SUL METODO:
-        - Se leggi 'AI', 'Acquacoltura' o 'Allevato' -> metodo: 'ALLEVATO'. (Esempio: Salmone AI è sempre ALLEVATO).
-        - Se leggi 'RDT' -> attrezzo: 'Reti da traino' e metodo: 'PESCATO'.
-        - Se leggi 'LM' o 'EF' -> attrezzo: 'Ami e palangari' e metodo: 'PESCATO'.
-        - Se leggi 'GNS' -> attrezzo: 'Reti da posta' e metodo: 'PESCATO'.
-        Campi richiesti: nome, sci (nome scientifico), lotto, metodo, zona (codice FAO), origine (nazione), attrezzo.
-        Testo da analizzare: {testo_pdf}
-        """
+        prompt = f"""Analizza fattura ittica. REGOLE: AI->ALLEVATO, RDT->Reti da traino, LM/EF->Ami e palangari. 
+        JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"""
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA (LAYOUT BLOCCATO) ---
+# --- 3. MOTORE DI STAMPA ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
 
 def disegna_su_pdf(pdf, p):
-    pdf.add_page()
-    pdf.set_margins(4, 3, 4)
-    w_full = 92
-    # Intestazione
+    pdf.add_page(); pdf.set_margins(4, 3, 4); w_full = 92
     pdf.set_y(3); pdf.set_font("helvetica", "B", 8); pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
-    # Nome Commerciale (Grande)
     pdf.set_y(7); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(w_full, 7, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
-    # Nome Scientifico (Avvicinato)
     pdf.set_y(16); pdf.set_font("helvetica", "I", 10); pdf.multi_cell(w_full, 4, f"({pulisci_testo(p.get('sci',''))})", 0, 'C')
-    # Metodo e Origine
-    pdf.set_y(23); pdf.set_font("helvetica", "", 9)
-    metodo = str(p.get('metodo', 'PESCATO')).upper()
-    zona = pulisci_testo(p.get('zona', ''))
-    origine = pulisci_testo(p.get('origine', ''))
-    attrezzo = pulisci_testo(p.get('attrezzo', ''))
-    if "ALLEVATO" in metodo: testo = f"ALLEVATO IN: {origine.upper()} (Zona: {zona.upper()})"
+    pdf.set_y(23); metodo = str(p.get('metodo', 'PESCATO')).upper(); pdf.set_font("helvetica", "", 9)
+    if "ALLEVATO" in metodo: testo = f"ALLEVATO IN: {str(p.get('origine','')).upper()} (Zona: {p.get('zona','')})"
     else:
-        attr = f" CON {attrezzo.upper()}" if attrezzo and "SCONOSCIUTO" not in attrezzo.upper() else ""
-        testo = f"PESCATO{attr}\nZONA: {zona.upper()} - {origine.upper()}"
+        attr = f" CON {str(p.get('attrezzo','')).upper()}" if p.get('attrezzo') and "SCONOSCIUTO" not in str(p.get('attrezzo','')).upper() else ""
+        testo = f"PESCATO{attr}\nZONA: {p.get('zona','')} - {str(p.get('origine','')).upper()}"
     pdf.multi_cell(w_full, 4, testo, 0, 'C'); pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
-    # Prezzo (Gigante)
-    if str(p.get('prezzo', '')).strip():
+    if str(p.get('prezzo','')).strip():
         pdf.set_y(36); pdf.set_font("helvetica", "B", 22); pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
-    # Lotto (Box rialzato)
     pdf.set_y(46); pdf.set_font("helvetica", "B", 11); pdf.set_x(5); pdf.cell(90, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
-    # Date (Distanziate dal fondo)
     pdf.set_y(56); pdf.set_font("helvetica", "", 8); pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
 
 def genera_pdf_bytes(lista_p):
@@ -114,37 +87,35 @@ def converti_pdf_in_immagine(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     return doc.load_page(0).get_pixmap(dpi=120).tobytes("png")
 
-# --- 4. INTERFACCIA A 3 TAB ---
+# --- 4. INTERFACCIA ---
 tab_et, tab_mag, tab_gastro = st.tabs(["🏷️ ETICHETTE", "📦 MAGAZZINO", "👨‍🍳 GASTROMIA"])
 
 with tab_et:
     if not st.session_state.get("prodotti"):
-        sub_tab1, sub_tab2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
-        with sub_tab1:
-            n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
-            file = st.file_uploader("Trascina PDF qui", type="pdf")
-            if file and st.button("🚀 Analizza PDF", type="primary"):
-                with st.spinner("Analisi in corso..."):
+        s1, s2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
+        with s1:
+            file = st.file_uploader("Fattura PDF", type="pdf")
+            if file and st.button("🚀 Analizza"):
+                with st.spinner("Analisi..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
-                    res = chiedi_a_gemini(text, MODELLI_AI[n_modello])
+                    res = chiedi_a_gemini(text, "gemini-2.5-flash")
                     if res:
                         for p in res: p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
                         st.session_state.prodotti = res; st.rerun()
-        with sub_tab2:
-            if st.button("➕ Crea Nuova Etichetta"):
+        with s2:
+            if st.button("➕ Crea Nuova"):
                 st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]; st.rerun()
     else:
-        st.success(f"✅ Trovati {len(st.session_state.prodotti)} prodotti")
-        c_act1, c_act2, c_act3 = st.columns([2,2,1])
-        with c_act1: st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
-        with c_act2:
-            if st.button("📥 SALVA TUTTO IN MAGAZZINO", type="primary"):
-                conn = sqlite3.connect(DB_FILE); c = conn.cursor(); data_c = datetime.now().strftime("%d/%m/%Y")
-                for prod in st.session_state.prodotti:
+        c_a1, c_a2, c_a3 = st.columns([2,2,1])
+        with c_a1: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
+        with c_a2:
+            if st.button("📥 SALVA TUTTO", type="primary"):
+                conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
+                for pr in st.session_state.prodotti:
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
-                              (prod['nome'], prod.get('sci'), prod.get('lotto'), prod.get('metodo'), prod.get('zona'), prod.get('origine'), data_c))
-                conn.commit(); conn.close(); st.toast("✅ Magazzino aggiornato con successo!")
-        with c_act3:
+                              (pr['nome'], pr.get('sci'), pr.get('lotto'), pr.get('metodo'), pr.get('zona'), pr.get('origine'), dt))
+                conn.commit(); conn.close(); st.toast("✅ Magazzino aggiornato!")
+        with c_a3:
             if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
         
         for i, p in enumerate(st.session_state.prodotti):
@@ -156,61 +127,80 @@ with tab_et:
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
-                    conn.commit(); conn.close(); st.toast(f"✅ {p['nome']} salvato nel registro!")
+                    conn.commit(); conn.close(); st.toast(f"✅ {p['nome']} salvato!")
                 
-                c1, c2, c3 = st.columns(3)
-                p['sci'] = c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
-                p['metodo'] = c2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
-                p['zona'] = c3.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
+                c_1, c_2, c_3 = st.columns(3)
+                p['sci'] = c_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
+                p['metodo'] = c_2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
+                p['zona'] = c_3.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
                 
-                c4, c5, c6 = st.columns(3)
-                p['origine'] = c4.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
+                c_4, c_5, c_6 = st.columns(3)
+                p['origine'] = c_4.text_input("Origine", p.get('origine',''), key=f"o_{i}")
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
-                    p['attrezzo'] = c5.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
-                p['prezzo'] = c6.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
+                    p['attrezzo'] = c_5.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
+                p['prezzo'] = c_6.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
                 
-                c7, c8 = st.columns(2)
-                p['conf'] = c7.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
-                p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
-                
-                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=400)
+                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=300)
 
 with tab_mag:
     st.subheader("📋 Registro Materie Prime")
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    dati = c.execute("SELECT data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
+    # Visualizzazione Tabella Ordinata con Nomi Colonne Intelligenti
+    dati = c.execute("SELECT id, data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
     
     if dati:
-        st.table(dati)
+        # Trasformiamo in lista di dizionari per dare i nomi alle colonne
+        display_data = []
+        for d in dati:
+            display_data.append({
+                "ID": d[0],
+                "Data Carico": d[1],
+                "Prodotto": d[2],
+                "Lotto": d[3],
+                "Metodo": d[4],
+                "Origine": d[5]
+            })
+        
+        # Tabella con intestazioni vere
+        st.dataframe(display_data, use_container_width=True, hide_index=True)
+        
         st.divider()
-        st.warning("⚠️ Gestione Database")
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            if st.button("🗑️ SVUOTA TUTTO IL MAGAZZINO", type="secondary"):
-                c.execute("DELETE FROM magazzino")
-                conn.commit(); st.success("Registro ripulito!"); st.rerun()
-        with col_b2:
-            with open(DB_FILE, "rb") as f:
-                st.download_button("💾 SCARICA BACKUP DB", f, "backup_pescheria.db")
+        st.write("🗑️ **Area Rimozione**")
+        col_id, col_btn = st.columns([1, 4])
+        id_da_eliminare = col_id.number_input("Inserisci ID da eliminare", min_value=1, step=1, key="id_del")
+        if col_btn.button("❌ ELIMINA RIGA SELEZIONATA", type="secondary"):
+            c.execute("DELETE FROM magazzino WHERE id=?", (id_da_eliminare,))
+            conn.commit(); conn.close(); st.rerun()
+            
+        if st.button("🚨 SVUOTA TUTTO IL REGISTRO"):
+            c.execute("DELETE FROM magazzino"); conn.commit(); conn.close(); st.rerun()
     else:
-        st.info("Magazzino vuoto. Carica una fattura per iniziare.")
+        st.info("Magazzino vuoto.")
     conn.close()
 
 with tab_gastro:
-    st.subheader("👨‍🍳 Registro Produzioni Gastronomia")
+    st.subheader("👨‍🍳 Registro Produzioni")
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        piatto = st.text_input("Cosa stai preparando?")
+        piatto = st.text_input("Nome Piatto")
         conn = sqlite3.connect(DB_FILE)
-        materie = conn.execute("SELECT nome, lotto, data_carico FROM magazzino ORDER BY id DESC").fetchall(); conn.close()
-        ingredienti = st.multiselect("Seleziona ingredienti (Lotti carichi)", [f"{m[0]} (Lotto: {m[1]} - {m[2]})" for m in materie])
-        if st.button("📝 Registra Produzione", type="primary"):
+        materie = conn.execute("SELECT nome, lotto, data_carico FROM magazzino ORDER BY id DESC").fetchall()
+        ingredienti = st.multiselect("Ingredienti", [f"{m[0]} (Lotto: {m[1]} - {m[2]})" for m in materie])
+        if st.button("📝 Registra"):
             if piatto and ingredienti:
-                conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                c = conn.cursor()
                 c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod) VALUES (?,?,?)", (piatto, ", ".join(ingredienti), datetime.now().strftime("%d/%m/%Y")))
-                conn.commit(); conn.close(); st.success("✅ Produzione registrata!")
-            else: st.error("Inserisci piatto e almeno un ingrediente!")
+                conn.commit(); st.success("Registrato!"); st.rerun()
+        conn.close()
     with col_g2:
-        conn = sqlite3.connect(DB_FILE); st.write("Ultime Produzioni:"); st.table(conn.execute("SELECT data_prod, piatto, ingredienti FROM produzioni ORDER BY id DESC LIMIT 10").fetchall()); conn.close()
+        conn = sqlite3.connect(DB_FILE)
+        prods = conn.execute("SELECT id, data_prod, piatto, ingredienti FROM produzioni ORDER BY id DESC").fetchall()
+        for pr in prods:
+            with st.expander(f"📅 {pr[1]} - {pr[2]}"):
+                st.write(f"Ingredienti: {pr[3]}")
+                if st.button("🗑️ Elimina", key=f"del_g_{pr[0]}"):
+                    c = conn.cursor(); c.execute("DELETE FROM produzioni WHERE id=?", (pr[0],))
+                    conn.commit(); conn.close(); st.rerun()
+        conn.close()
