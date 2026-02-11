@@ -80,6 +80,10 @@ def genera_pdf_bytes(lista_p):
     for p in lista_p: disegna_su_pdf(pdf, p)
     return bytes(pdf.output())
 
+def converti_pdf_in_immagine(pdf_bytes):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    return doc.load_page(0).get_pixmap(dpi=120).tobytes("png")
+
 # --- 4. INTERFACCIA ---
 tab_et, tab_mag, tab_gastro = st.tabs(["🏷️ ETICHETTE", "📦 MAGAZZINO", "👨‍🍳 GASTRONOMIA"])
 
@@ -90,6 +94,7 @@ with tab_et:
             reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
             st.session_state.prodotti = chiedi_a_gemini(text, "gemini-2.5-flash"); st.rerun()
     else:
+        # BARRA SUPERIORE BILANCIATA
         c1, c2, c3 = st.columns([1, 2, 1])
         c1.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         if c2.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
@@ -102,6 +107,7 @@ with tab_et:
         
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
+                # RIGA 1: NOME E LOTTO + BOTTONI
                 r1_l, r1_m, r1_r = st.columns([1.5, 3, 1])
                 p['nome'] = r1_l.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
                 p['lotto'] = r1_m.text_input("Lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
@@ -111,10 +117,10 @@ with tab_et:
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
-                    conn.commit(); conn.close(); st.rerun() # AGGIORNAMENTO ISTANTANEO
+                    conn.commit(); conn.close(); st.rerun()
                 btns[1].download_button("🖨️ Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
 
-                # Griglia Dati (come richiesto)
+                # DATI TECNICI
                 r2_1, r2_2 = st.columns(2)
                 p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
@@ -133,16 +139,34 @@ with tab_et:
                 
                 p['prezzo'] = st.text_input("Prezzo €/Kg", p.get('prezzo',''), key=f"pr_{i}")
 
+                # ANTEPRIMA IN BASSO A SINISTRA (RIPRISTINATA)
+                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=250)
+
 with tab_mag:
-    conn = sqlite3.connect(DB_FILE)
-    dati = conn.execute("SELECT data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
+    st.subheader("📦 Gestione Magazzino")
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    dati = c.execute("SELECT id, data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
     if dati:
-        st.dataframe([{"Data": d[0], "Prodotto": d[1], "Lotto": d[2], "Metodo": d[3], "Origine": d[4]} for d in dati], use_container_width=True, hide_index=True)
-        if st.button("🚨 SVUOTA TUTTO"):
-            conn.execute("DELETE FROM magazzino"); conn.commit(); st.rerun()
-    else: st.info("Magazzino vuoto.")
+        st.dataframe([{"Data": d[1], "Prodotto": d[2], "Lotto": d[3], "Metodo": d[4], "Origine": d[5]} for d in dati], use_container_width=True, hide_index=True)
+        st.divider()
+        col_del1, col_del2 = st.columns(2)
+        with col_del1:
+            st.write("🗑️ **Elimina Riga**")
+            opzioni = {f"{d[2]} (Lotto: {d[3]})": d[0] for d in dati}
+            da_eliminare = st.selectbox("Seleziona:", list(opzioni.keys()))
+            if st.button("Conferma Eliminazione"):
+                c.execute("DELETE FROM magazzino WHERE id=?", (opzioni[da_eliminare],))
+                conn.commit(); conn.close(); st.rerun()
+        with col_del2:
+            st.write("🚨 **Zona Pericolo**")
+            if st.button("⚠️ SVUOTA TUTTO"):
+                st.session_state.confirm_delete_all = True
+            if st.session_state.get("confirm_delete_all"):
+                if st.button("SÌ, CANCELLA TUTTO ORA"):
+                    c.execute("DELETE FROM magazzino"); conn.commit(); st.session_state.confirm_delete_all = False; st.rerun()
+                if st.button("Annulla"): st.session_state.confirm_delete_all = False; st.rerun()
     conn.close()
 
 with tab_gastro:
-    st.write("👨‍🍳 Registro Produzioni")
+    st.subheader("👨‍🍳 Registro Gastronomia")
     # ... (Codice Gastro invariato)
