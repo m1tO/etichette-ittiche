@@ -22,7 +22,6 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS produzioni 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, piatto TEXT, ingredienti TEXT, 
                   data_prod TEXT, lotto_interno TEXT)''')
-    # Controllo sicuro per la colonna lotto_interno
     cursor = c.execute('PRAGMA table_info(produzioni)')
     columns = [row[1] for row in cursor.fetchall()]
     if 'lotto_interno' not in columns:
@@ -128,7 +127,6 @@ with tab_et:
                           (pr['nome'], pr.get('sci'), pr.get('lotto'), pr.get('metodo'), pr.get('zona'), pr.get('origine'), dt))
             conn.commit(); conn.close(); st.rerun()
         if c3.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
-        
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
                 r1_l, r1_m, r1_r = st.columns([1.5, 3, 1])
@@ -172,7 +170,6 @@ with tab_mag:
 with tab_gastro:
     st.subheader("👨‍🍳 Gestione Gastronomia")
     sub_nuovo, sub_storico = st.tabs(["📝 NUOVA PRODUZIONE", "📜 STORICO & STAMPA"])
-    
     with sub_nuovo:
         col_dx, col_sx = st.columns(2)
         with col_dx:
@@ -181,16 +178,13 @@ with tab_gastro:
             ingredienti_sel = st.multiselect("Seleziona Ingredienti", [f"{m[0]} (Lotto: {m[1]})" for m in materie])
             if st.button("✅ Registra Produzione", type="primary"):
                 if piatto_nome and ingredienti_sel:
-                    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
-                    dt_att = datetime.now()
+                    conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt_att = datetime.now()
                     res_id = c.execute("SELECT MAX(id) FROM produzioni").fetchone()
                     next_id = (res_id[0] + 1) if res_id[0] else 1
                     lotto_int = f"PRD-{dt_att.strftime('%Y%m%d')}-{next_id}"
                     c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod, lotto_interno) VALUES (?,?,?,?)", 
                               (piatto_nome, ", ".join(ingredienti_sel), dt_att.strftime("%d/%m/%Y"), lotto_int))
-                    conn.commit(); conn.close()
-                    st.success(f"📦 Registrato! Lotto: {lotto_int}"); st.rerun()
-
+                    conn.commit(); conn.close(); st.success(f"📦 Registrato! Lotto: {lotto_int}"); st.rerun()
     with sub_storico:
         conn = sqlite3.connect(DB_FILE)
         df_prod = pd.read_sql_query("SELECT * FROM produzioni ORDER BY id DESC", conn)
@@ -198,18 +192,28 @@ with tab_gastro:
         if not df_prod.empty:
             for i, row in df_prod.iterrows():
                 with st.container(border=True):
-                    c1, c2, c3 = st.columns([3, 1, 1])
+                    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
                     c1.markdown(f"**{row['piatto']}**")
                     c1.markdown(f"🆔 Lotto: {row['lotto_interno']}")
                     c1.caption(f"📅 {row['data_prod']} | 🐟 {row['ingredienti']}")
-                    
                     with c2.popover("🖨️ Stampa"):
-                        # CHIAVI UNICHE PER EVITARE L'ERRORE
                         scad_val = st.text_input("Scadenza", "7 giorni", key=f"scad_{row['id']}")
                         temp_val = st.text_input("Temperatura", "+4°C", key=f"temp_{row['id']}")
                         pdf_g = FPDF('L', 'mm', (62, 100)); pdf_g.set_auto_page_break(False)
                         disegna_pdf_gastro(pdf_g, row['piatto'], row['lotto_interno'], scad_val, temp_val)
                         st.download_button("Scarica", bytes(pdf_g.output()), f"Etichetta_{row['piatto']}.pdf", key=f"btn_dl_{row['id']}")
-                    
-                    if c3.button("🗑️ Elimina", key=f"del_g_{row['id']}"):
+                    if c3.button("✏️ Modifica", key=f"edit_g_{row['id']}"):
+                        st.session_state[f"edit_mode_g_{row['id']}"] = True
+                    if c4.button("🗑️ Elimina", key=f"del_g_{row['id']}"):
                         conn = sqlite3.connect(DB_FILE); c = conn.cursor(); c.execute("DELETE FROM produzioni WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
+                    if st.session_state.get(f"edit_mode_g_{row['id']}", False):
+                        with st.form(key=f"form_edit_g_{row['id']}"):
+                            n_nome = st.text_input("Nome", value=row['piatto'])
+                            n_ing = st.text_area("Ingredienti", value=row['ingredienti'])
+                            f1, f2 = st.columns(2)
+                            if f1.form_submit_button("Salva"):
+                                conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                                c.execute("UPDATE produzioni SET piatto=?, ingredienti=? WHERE id=?", (n_nome, n_ing, row['id']))
+                                conn.commit(); conn.close(); st.session_state[f"edit_mode_g_{row['id']}"] = False; st.rerun()
+                            if f2.form_submit_button("Annulla"):
+                                st.session_state[f"edit_mode_g_{row['id']}"] = False; st.rerun()
