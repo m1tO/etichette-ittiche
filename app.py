@@ -38,14 +38,10 @@ st.markdown("""
     h1 { color: #4facfe; font-size: 2.2rem; font-weight: 800; }
     button[data-baseweb="tab"] { font-size: 22px !important; font-weight: 700 !important; }
     .stButton > button { width: 100%; border-radius: 8px; }
-    /* Ingrandimento tab opzioni iniziali */
-    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        font-size: 24px !important; font-weight: bold !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. LOGICA AI ---
+# --- 2. LOGICA AI (POTENZIATA DI NUOVO) ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -54,13 +50,22 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"Analizza fattura ed estrai JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"
+        # PROMPT RINFORZATO CON SIGLE TECNICHE
+        prompt = f"""
+        Analizza la fattura ittica ed estrai un array JSON. Sii estremamente rigoroso:
+        1. SE LEGGI 'AI' o 'Acquacoltura' -> il metodo è 'ALLEVATO' (fondamentale per il Salmone).
+        2. SE LEGGI 'RDT' -> l'attrezzo è 'Reti da traino' (Metodo: PESCATO).
+        3. SE LEGGI 'LM' o 'EF' -> l'attrezzo è 'Ami e palangari' (Metodo: PESCATO).
+        4. SE LEGGI 'GNS' -> l'attrezzo è 'Reti da posta' (Metodo: PESCATO).
+        5. Campi richiesti: nome, sci, lotto, metodo, zona, origine, attrezzo, conf.
+        Solo il JSON, no commenti. Testo: {testo_pdf}
+        """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
     except: return []
 
-# --- 3. MOTORE DI STAMPA (PRECISIONE MILLIMETRICA) ---
+# --- 3. MOTORE DI STAMPA (LAYOUT BLOCCATO) ---
 def pulisci_testo(t):
     if not t: return ""
     return str(t).replace("€", "EUR").strip().encode('latin-1', 'replace').decode('latin-1')
@@ -72,22 +77,20 @@ def disegna_su_pdf(pdf, p):
     pdf.set_y(3); pdf.set_font("helvetica", "B", 8); pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.set_y(7); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(w_full, 7, pulisci_testo(p.get('nome','')).upper(), 0, 'C')
     pdf.set_y(16); pdf.set_font("helvetica", "I", 10); pdf.multi_cell(w_full, 4, f"({pulisci_testo(p.get('sci',''))})", 0, 'C')
-    pdf.set_y(23); pdf.set_font("helvetica", "", 9)
-    metodo = str(p.get('metodo', 'PESCATO')).upper()
+    pdf.set_y(23); metodo = str(p.get('metodo', 'PESCATO')).upper()
+    pdf.set_font("helvetica", "", 9)
     if "ALLEVATO" in metodo: testo = f"ALLEVATO IN: {str(p.get('origine','')).upper()} (Zona: {p.get('zona','')})"
     else:
-        attr = f" CON {p.get('attrezzo','').upper()}" if p.get('attrezzo') and "SCONOSCIUTO" not in str(p.get('attrezzo','')).upper() else ""
+        attr = f" CON {str(p.get('attrezzo','')).upper()}" if p.get('attrezzo') and "SCONOSCIUTO" not in str(p.get('attrezzo','')).upper() else ""
         testo = f"PESCATO{attr}\nZONA: {p.get('zona','')} - {str(p.get('origine','')).upper()}"
-    pdf.multi_cell(w_full, 4, testo, 0, 'C')
-    pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
+    pdf.multi_cell(w_full, 4, testo, 0, 'C'); pdf.cell(w_full, 4, "PRODOTTO FRESCO", 0, 1, 'C')
     if str(p.get('prezzo','')).strip():
         pdf.set_y(36); pdf.set_font("helvetica", "B", 22); pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
     pdf.set_y(46); pdf.set_font("helvetica", "B", 11); pdf.set_x(5); pdf.cell(90, 8, f"LOTTO: {pulisci_testo(p.get('lotto',''))}", 1, 0, 'C')
     pdf.set_y(56); pdf.set_font("helvetica", "", 8); pdf.cell(w_full, 4, f"Conf: {p.get('conf','')} - Scad: {p.get('scadenza','')}", 0, 0, 'R')
 
 def genera_pdf_bytes(lista_p):
-    pdf = FPDF('L', 'mm', (62, 100))
-    pdf.set_auto_page_break(False)
+    pdf = FPDF('L', 'mm', (62, 100)); pdf.set_auto_page_break(False)
     for p in lista_p: disegna_su_pdf(pdf, p)
     return bytes(pdf.output())
 
@@ -100,12 +103,10 @@ tab_et, tab_mag, tab_gastro = st.tabs(["🏷️ ETICHETTE", "📦 MAGAZZINO", "�
 
 with tab_et:
     if not st.session_state.get("prodotti"):
-        # REINSERIMENTO TABS MANUALI/AI
         sub_tab1, sub_tab2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
-        
         with sub_tab1:
-            n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()), key="model_sel")
-            file = st.file_uploader("Trascina qui il PDF", type="pdf")
+            n_modello = st.selectbox("🧠 Motore AI", list(MODELLI_AI.keys()))
+            file = st.file_uploader("Trascina PDF", type="pdf")
             if file and st.button("🚀 Analizza PDF", type="primary"):
                 with st.spinner("Analisi in corso..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
@@ -113,15 +114,11 @@ with tab_et:
                     if res:
                         for p in res: p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
                         st.session_state.prodotti = res; st.rerun()
-        
         with sub_tab2:
-            st.write("### Crea un'etichetta da zero")
-            if st.button("➕ Crea Nuova Etichetta", type="secondary"):
-                p_vuoto = {"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}
-                st.session_state.prodotti = [p_vuoto]; st.rerun()
+            if st.button("➕ Crea Nuova Etichetta"):
+                st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]; st.rerun()
     else:
         st.success(f"✅ Trovati {len(st.session_state.prodotti)} prodotti")
-        
         c_act1, c_act2, c_act3 = st.columns([2,2,1])
         with c_act1: st.download_button("🖨️ SCARICA RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         with c_act2:
@@ -144,23 +141,23 @@ with tab_et:
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
                     conn.commit(); conn.close(); st.toast(f"✅ {p['nome']} salvato!")
-
+                
                 c1, c2, c3 = st.columns(3)
                 p['sci'] = c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = c2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
                 p['zona'] = c3.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
-
+                
                 c4, c5, c6 = st.columns(3)
                 p['origine'] = c4.text_input("Nazionalità", p.get('origine',''), key=f"o_{i}")
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
                     p['attrezzo'] = c5.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
                 p['prezzo'] = c6.text_input("Prezzo (€/Kg)", p.get('prezzo',''), key=f"pr_{i}")
-
+                
                 c7, c8 = st.columns(2)
                 p['conf'] = c7.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
                 p['scadenza'] = c8.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
-
+                
                 st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=400)
 
 with tab_mag:
@@ -168,6 +165,8 @@ with tab_mag:
     conn = sqlite3.connect(DB_FILE)
     dati = conn.execute("SELECT data_carico, nome, lotto, metodo, origine FROM magazzino ORDER BY id DESC").fetchall()
     st.table(dati); conn.close()
+    with open(DB_FILE, "rb") as f:
+        st.download_button("💾 SCARICA BACKUP DATABASE", f, "backup_pescheria.db")
 
 with tab_gastro:
     st.subheader("👨‍🍳 Registro Produzioni")
