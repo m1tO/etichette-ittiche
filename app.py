@@ -19,11 +19,9 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS magazzino 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, sci TEXT, lotto TEXT, 
                   metodo TEXT, zona TEXT, origine TEXT, data_carico TEXT)''')
-    # Tabella produzioni con colonna lotto_interno
     c.execute('''CREATE TABLE IF NOT EXISTS produzioni 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, piatto TEXT, ingredienti TEXT, 
                   data_prod TEXT, lotto_interno TEXT)''')
-    # Controllo per aggiungere la colonna se il DB esiste già senza
     try:
         c.execute("ALTER TABLE produzioni ADD COLUMN lotto_interno TEXT")
     except:
@@ -92,6 +90,16 @@ def disegna_su_pdf(pdf, p):
         pdf.set_y(36); pdf.set_font("helvetica", "B", 22); pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
     pdf.set_y(46); pdf.set_font("helvetica", "B", 11); pdf.set_x(5); pdf.cell(90, 8, f"LOTTO: {p.get('lotto','')}", 1, 0, 'C')
 
+# Funzione specifica per etichette gastronomia
+def disegna_pdf_gastro(pdf, nome, lotto, scadenza, temp):
+    pdf.add_page(); pdf.set_margins(4, 3, 4); w_full = 92
+    pdf.set_y(4); pdf.set_font("helvetica", "B", 8); pdf.cell(w_full, 4, "GASTRONOMIA DI MARE - PALERMO", 0, 1, 'C')
+    pdf.set_y(10); pdf.set_font("helvetica", "B", 16); pdf.multi_cell(w_full, 7, nome.upper(), 0, 'C')
+    pdf.set_y(25); pdf.set_font("helvetica", "B", 10); pdf.cell(w_full, 5, f"LOTTO: {lotto}", 0, 1, 'C')
+    pdf.set_y(32); pdf.set_font("helvetica", "", 10); pdf.cell(w_full, 5, f"SCADENZA: {scadenza}", 0, 1, 'L')
+    pdf.cell(w_full, 5, f"CONSERVARE A: {temp}", 0, 1, 'L')
+    pdf.set_y(45); pdf.set_font("helvetica", "I", 8); pdf.multi_cell(w_full, 4, "Prodotto artigianale pronto al consumo.", 0, 'C')
+
 def genera_pdf_bytes(lista_p):
     pdf = FPDF('L', 'mm', (62, 100)); pdf.set_auto_page_break(False)
     for p in lista_p: disegna_su_pdf(pdf, p)
@@ -104,6 +112,7 @@ def converti_pdf_in_immagine(pdf_bytes):
 # --- 4. INTERFACCIA ---
 tab_et, tab_mag, tab_gastro = st.tabs(["🏷️ ETICHETTE", "📦 MAGAZZINO", "👨‍🍳 GASTRONOMIA"])
 
+# (Sezioni Etichette e Magazzino rimaste invariate)
 with tab_et:
     if not st.session_state.get("prodotti"):
         s1, s2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
@@ -142,7 +151,6 @@ with tab_et:
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
                     conn.commit(); conn.close(); st.toast("✅ Caricato!"); st.rerun()
                 btn_cols[1].download_button("Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
-
                 r2_1, r2_2 = st.columns(2); p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
                 if p['metodo'] == "PESCATO":
@@ -159,47 +167,43 @@ with tab_mag:
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query("SELECT id, data_carico as Data, nome as Prodotto, lotto as Lotto FROM magazzino ORDER BY id DESC", conn)
     if not df.empty:
-        df_with_selections = df.copy()
-        df_with_selections.insert(0, "Seleziona", False)
+        df_with_selections = df.copy(); df_with_selections.insert(0, "Seleziona", False)
         edited_df = st.data_editor(df_with_selections, hide_index=True, use_container_width=True)
         selected_ids = edited_df[edited_df.Seleziona == True]["id"].tolist()
-        if selected_ids:
-            if st.button(f"🗑️ ELIMINA {len(selected_ids)} SELEZIONATI", type="primary"):
-                c = conn.cursor(); c.executemany("DELETE FROM magazzino WHERE id=?", [(idx,) for idx in selected_ids])
-                conn.commit(); conn.close(); st.rerun()
+        if selected_ids and st.button(f"🗑️ ELIMINA {len(selected_ids)} SELEZIONATI", type="primary"):
+            c = conn.cursor(); c.executemany("DELETE FROM magazzino WHERE id=?", [(idx,) for idx in selected_ids])
+            conn.commit(); conn.close(); st.rerun()
         st.divider()
         if st.button("🚨 SVUOTA TUTTO"):
             c = conn.cursor(); c.execute("DELETE FROM magazzino"); conn.commit(); conn.close(); st.rerun()
     else: st.info("Magazzino vuoto.")
     conn.close()
 
+# --- SCHEDA GASTRO AGGIORNATA ---
 with tab_gastro:
     st.subheader("👨‍🍳 Gestione Gastronomia")
-    sub_nuovo, sub_storico = st.tabs(["📝 NUOVA PRODUZIONE", "📜 STORICO & MODIFICA"])
+    sub_nuovo, sub_storico = st.tabs(["📝 NUOVA PRODUZIONE", "📜 STORICO & STAMPA"])
     
     with sub_nuovo:
         col_dx, col_sx = st.columns(2)
         with col_dx:
-            piatto_nome = st.text_input("Nome Preparazione", placeholder="es. Insalata di Mare")
-            conn = sqlite3.connect(DB_FILE)
-            materie = conn.execute("SELECT nome, lotto FROM magazzino ORDER BY id DESC").fetchall()
-            conn.close()
+            piatto_nome = st.text_input("Nome Preparazione", placeholder="es. Caponata di Pesce Spada")
+            conn = sqlite3.connect(DB_FILE); materie = conn.execute("SELECT nome, lotto FROM magazzino ORDER BY id DESC").fetchall(); conn.close()
             ingredienti_sel = st.multiselect("Seleziona Ingredienti dal Magazzino", [f"{m[0]} (Lotto: {m[1]})" for m in materie])
             
             if st.button("✅ Registra Produzione", type="primary"):
                 if piatto_nome and ingredienti_sel:
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     data_attuale = datetime.now()
-                    # Generazione Lotto Interno: PRD-AAAAMMGG-ID
                     last_id_row = c.execute("SELECT MAX(id) FROM produzioni").fetchone()
                     next_id = (last_id_row[0] + 1) if last_id_row[0] else 1
                     lotto_interno = f"PRD-{data_attuale.strftime('%Y%m%d')}-{next_id}"
-                    
                     c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod, lotto_interno) VALUES (?,?,?,?)", 
                               (piatto_nome, ", ".join(ingredienti_sel), data_attuale.strftime("%d/%m/%Y"), lotto_interno))
                     conn.commit(); conn.close()
-                    st.success(f"Registrato! Lotto: {lotto_interno}"); st.rerun()
-                else: st.error("Inserisci nome e ingredienti.")
+                    # Messaggio di conferma richiesto
+                    st.success(f"📦 PRODUZIONE REGISTRATA! Lotto Interno: {lotto_interno}")
+                else: st.error("Dati mancanti!")
 
     with sub_storico:
         conn = sqlite3.connect(DB_FILE)
@@ -210,21 +214,16 @@ with tab_gastro:
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([3, 1, 1])
                     c1.markdown(f"**{row['piatto']}**")
-                    c1.markdown(f"🆔 **LOTTO INTERNO: {row['lotto_interno']}**")
+                    c1.markdown(f"🆔 Lotto: {row['lotto_interno']}")
                     c1.caption(f"📅 {row['data_prod']} | 🐟 {row['ingredienti']}")
-                    if c2.button("✏️ Modifica", key=f"mod_{row['id']}"):
-                        st.session_state[f"edit_mode_{row['id']}"] = True
+                    
+                    # Sezione Stampa Etichetta Gastronomia
+                    with c2.popover("🖨️ Stampa"):
+                        scad = st.text_input("Scadenza", "7 giorni", key=f"sc_{row['id']}")
+                        temp = st.text_input("Temp.", "+4°C", key=f"tm_{row['id']}")
+                        pdf_g = FPDF('L', 'mm', (62, 100)); pdf_g.set_auto_page_break(False)
+                        disegna_pdf_gastro(pdf_g, row['piatto'], row['lotto_interno'], scad, temp)
+                        st.download_button("Scarica Etichetta", bytes(pdf_g.output()), f"Etichetta_{row['piatto']}.pdf", key=f"dl_g_{row['id']}")
+                    
                     if c3.button("🗑️ Elimina", key=f"del_prod_{row['id']}"):
                         conn = sqlite3.connect(DB_FILE); c = conn.cursor(); c.execute("DELETE FROM produzioni WHERE id=?", (row['id'],)); conn.commit(); conn.close(); st.rerun()
-                    if st.session_state.get(f"edit_mode_{row['id']}", False):
-                        with st.form(key=f"form_mod_{row['id']}"):
-                            nuovo_nome = st.text_input("Nuovo Nome", value=row['piatto'])
-                            nuovi_ing = st.text_area("Ingredienti", value=row['ingredienti'])
-                            st.caption(f"Lotto Interno (non modificabile): {row['lotto_interno']}")
-                            f1, f2 = st.columns(2)
-                            if f1.form_submit_button("Salva"):
-                                conn = sqlite3.connect(DB_FILE); c = conn.cursor(); c.execute("UPDATE produzioni SET piatto=?, ingredienti=? WHERE id=?", (nuovo_nome, nuovi_ing, row['id'])); conn.commit(); conn.close()
-                                st.session_state[f"edit_mode_{row['id']}"] = False; st.rerun()
-                            if f2.form_submit_button("Annulla"):
-                                st.session_state[f"edit_mode_{row['id']}"] = False; st.rerun()
-        else: st.info("Ancora nessuna produzione registrata.")
