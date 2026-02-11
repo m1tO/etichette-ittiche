@@ -28,7 +28,7 @@ init_db()
 LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"]
 MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
-# --- STILE CSS PER I BOTTONI VERDI ---
+# --- STILE CSS (BOTTONI VERDI E LAYOUT PULITO) ---
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
@@ -41,16 +41,14 @@ st.markdown("""
         font-size: 20px !important; font-weight: 600 !important; color: #4facfe !important;
     }
     
-    /* Bottoni */
-    .stButton > button { border-radius: 6px; font-weight: bold !important; height: 35px; font-size: 14px !important; }
-    
-    /* Forza Colore Verde per il Caricamento */
+    /* Forza Colore Verde per Carica */
     button[kind="primary"] {
         background-color: #28a745 !important;
         border-color: #28a745 !important;
         color: white !important;
     }
     
+    .stButton > button { border-radius: 6px; font-weight: bold !important; height: 35px; }
     .stTextInput input { background-color: #1a1c24 !important; border: 1px solid #464b5c !important; color: white !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -107,17 +105,17 @@ with tab_et:
     if not st.session_state.get("prodotti"):
         s1, s2 = st.tabs(["📤 CARICA FATTURA", "✍️ INSERIMENTO MANUALE"])
         with s1:
-            file = st.file_uploader("Carica PDF", type="pdf")
+            file = st.file_uploader("Trascina PDF", type="pdf")
             if file and st.button("🚀 Analizza"):
-                with st.spinner("Analisi in corso..."):
+                with st.spinner("Lavoro in corso..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
                     res = chiedi_a_gemini(text, "gemini-2.5-flash")
                     if res:
                         for p in res: p['scadenza'] = ""; p['conf'] = ""; p['prezzo'] = ""
                         st.session_state.prodotti = res; st.rerun()
     else:
-        # BARRA SUPERIORE (STRETTA E BILANCIATA)
-        c_rull, c_car_all, c_space, c_exit = st.columns([1, 1.5, 2, 1])
+        # BARRA SUPERIORE BILANCIATA
+        c_rull, c_car_all, c_space, c_exit = st.columns([1.2, 2.5, 2, 1])
         with c_rull: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         with c_car_all: 
             if st.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
@@ -131,11 +129,11 @@ with tab_et:
         
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
-                # RIGA 1: NOME CORTO E BOTTONI APPICCICATI A DESTRA
+                # RIGA 1: NOME (CORTO) E BOTTONI (UNITI)
                 r1_c1, r1_c2, r1_c3 = st.columns([1.5, 3, 1])
                 p['nome'] = r1_c1.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
                 
-                # Tasti Carica e Stampa affiancati senza buchi
+                # Bottoni Carica (Verde) e Stampa affiancati
                 btn_cols = r1_c3.columns([1, 1], gap="small")
                 if btn_cols[0].button("📥 Carica", key=f"sv_{i}", type="primary"):
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
@@ -144,21 +142,28 @@ with tab_et:
                     conn.commit(); conn.close(); st.toast("✅ Registrato!")
                 btn_cols[1].download_button("🖨️ Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
 
-                # RIGA 2: DATI
+                # RIGA 2: LOTTO, SCIENTIFICO, METODO, ZONA
                 r2_c1, r2_c2, r2_c3, r2_c4 = st.columns([1.5, 2, 1, 0.8])
                 p['lotto'] = r2_c1.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
                 p['sci'] = r2_c2.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_c3.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
                 p['zona'] = r2_c4.text_input("Zona", p.get('zona',''), key=f"z_{i}")
 
-                # RIGA 3: ALTRI DATI
-                r3_c1, r3_c2, r3_c3, r3_c4 = st.columns([1.5, 1, 1, 1])
+                # RIGA 3: ORIGINE, ATTREZZO (RIPRISTINATO), PREZZO, DATE
+                r3_c1, r3_c2, r3_c3, r3_c4, r3_c5 = st.columns([1.5, 1.5, 1, 1, 1])
                 p['origine'] = r3_c1.text_input("Nazione", p.get('origine',''), key=f"o_{i}")
-                p['prezzo'] = r3_c2.text_input("Prezzo €", p.get('prezzo',''), key=f"pr_{i}")
-                p['conf'] = r3_c3.text_input("Conf.", p.get('conf',''), key=f"cf_{i}")
-                p['scadenza'] = r3_c4.text_input("Scad.", p.get('scadenza',''), key=f"sc_{i}")
+                
+                # Selettore Attrezzi visibile solo se PESCATO
+                if p['metodo'] == "PESCATO":
+                    a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
+                    p['attrezzo'] = r3_c2.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
+                else: r3_c2.empty()
+                
+                p['prezzo'] = r3_c3.text_input("Prezzo €", p.get('prezzo',''), key=f"pr_{i}")
+                p['conf'] = r3_c4.text_input("Conf.", p.get('conf',''), key=f"cf_{i}")
+                p['scadenza'] = r3_c5.text_input("Scad.", p.get('scadenza',''), key=f"sc_{i}")
 
-                # ANTEPRIMA
+                # ANTEPRIMA FINE SCHEDA
                 st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=240)
 
 # --- TAB MAGAZZINO E GASTRO ---
@@ -190,12 +195,3 @@ with tab_gastro:
                 conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                 c.execute("INSERT INTO produzioni (piatto, ingredienti, data_prod) VALUES (?,?,?)", (piatto, ", ".join(ingredienti), datetime.now().strftime("%d/%m/%Y")))
                 conn.commit(); conn.close(); st.success("Fatto!"); st.rerun()
-    with col_g2:
-        conn = sqlite3.connect(DB_FILE); prods = conn.execute("SELECT id, data_prod, piatto, ingredienti FROM produzioni ORDER BY id DESC").fetchall()
-        for pr in prods:
-            with st.expander(f"📅 {pr[1]} - {pr[2]}"):
-                st.write(f"Ingredienti: {pr[3]}")
-                if st.button("🗑️ Elimina", key=f"del_g_{pr[0]}"):
-                    c = conn.cursor(); c.execute("DELETE FROM produzioni WHERE id=?", (pr[0],))
-                    conn.commit(); conn.close(); st.rerun()
-        conn.close()
