@@ -18,13 +18,18 @@ def init_db():
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS magazzino 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, sci TEXT, lotto TEXT, 
-                  metodo TEXT, zona TEXT, origine TEXT, data_carico TEXT)''')
+                  metodo TEXT, zona TEXT, origine TEXT, data_carico TEXT, fattura_rif TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS produzioni 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, piatto TEXT, ingredienti TEXT, 
                   data_prod TEXT, lotto_interno TEXT)''')
+    # Controllo per aggiornare colonne esistenti
+    cursor = c.execute('PRAGMA table_info(magazzino)')
+    cols = [row[1] for row in cursor.fetchall()]
+    if 'fattura_rif' not in cols:
+        c.execute("ALTER TABLE magazzino ADD COLUMN fattura_rif TEXT")
     cursor = c.execute('PRAGMA table_info(produzioni)')
-    columns = [row[1] for row in cursor.fetchall()]
-    if 'lotto_interno' not in columns:
+    cols_p = [row[1] for row in cursor.fetchall()]
+    if 'lotto_interno' not in cols_p:
         c.execute("ALTER TABLE produzioni ADD COLUMN lotto_interno TEXT")
     conn.commit()
     conn.close()
@@ -60,7 +65,14 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"Analizza fattura ittica. REGOLE: AI->ALLEVATO, RDT/LM/GNS->PESCATO. JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"
+        prompt = f"""
+        Analizza questa fattura ittica. SEGUI QUESTE REGOLE TASSATIVE:
+        1. SE leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
+        2. SE leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO' -> metodo: 'PESCATO'.
+        3. Assegna l'attrezzo corretto in base alle sigle (RDT=Reti da traino, GNS=Reti da posta, LM=Ami).
+        4. ESTRAI SEMPRE: nome, sci, lotto, metodo, zona, origine, attrezzo.
+        Solo JSON array. Testo: {testo_pdf}
+        """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
@@ -118,27 +130,32 @@ with tab_et:
             if st.button("➕ Crea Nuova Etichetta"):
                 st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]; st.rerun()
     else:
-        c1, c2, c3 = st.columns([1, 2, 1])
-        c1.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
-        if c2.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
-            conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
-            for pr in st.session_state.prodotti:
-                c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
-                          (pr['nome'], pr.get('sci'), pr.get('lotto'), pr.get('metodo'), pr.get('zona'), pr.get('origine'), dt))
-            conn.commit(); conn.close(); st.rerun()
-        if c3.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
+        rif_fattura = st.text_input("📝 Riferimento Fattura (es. N. 10 del 11/02/2026)", placeholder="Inserisci il riferimento fiscale...")
+        
+        c_rull, c_car_all, c_exit = st.columns([1, 2, 1])
+        with c_rull: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
+        with c_car_all: 
+            if st.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
+                conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
+                for pr in st.session_state.prodotti:
+                    c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico, fattura_rif) VALUES (?,?,?,?,?,?,?,?)",
+                              (pr['nome'], pr.get('sci'), pr.get('lotto'), pr.get('metodo'), pr.get('zona'), pr.get('origine'), dt, rif_fattura))
+                conn.commit(); conn.close(); st.rerun()
+        with c_exit:
+            if st.button("❌ CHIUDI"): st.session_state.prodotti = None; st.rerun()
+        
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
-                r1_l, r1_m, r1_r = st.columns([1.5, 3, 1])
-                p['nome'] = r1_l.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
-                p['lotto'] = r1_m.text_input("Lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
-                btns = r1_r.columns(2, gap="small")
-                if btns[0].button("Carica", key=f"sv_{i}", type="primary"):
+                r1_left, r1_mid, r1_right = st.columns([1.5, 3, 1])
+                p['nome'] = r1_left.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
+                p['lotto'] = r1_mid.text_input("Lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
+                btn_cols = r1_right.columns([1, 1], gap="small")
+                if btn_cols[0].button("Carica", key=f"sv_{i}", type="primary"):
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
-                    c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
-                              (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y")))
+                    c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico, fattura_rif) VALUES (?,?,?,?,?,?,?,?)",
+                              (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y"), rif_fattura))
                     conn.commit(); conn.close(); st.toast("✅ Caricato!"); st.rerun()
-                btns[1].download_button("Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
+                btn_cols[1].download_button("Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
                 r2_1, r2_2 = st.columns(2); p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
                 if p['metodo'] == "PESCATO":
@@ -153,7 +170,7 @@ with tab_et:
 with tab_mag:
     st.subheader("📦 Registro Magazzino")
     conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT id, data_carico as Data, nome as Prodotto, lotto as Lotto FROM magazzino ORDER BY id DESC", conn)
+    df = pd.read_sql_query("SELECT id, data_carico as Data, nome as Prodotto, lotto as Lotto, fattura_rif as Fattura FROM magazzino ORDER BY id DESC", conn)
     if not df.empty:
         df_with_selections = df.copy(); df_with_selections.insert(0, "Seleziona", False)
         edited_df = st.data_editor(df_with_selections, hide_index=True, use_container_width=True, key="mag_editor")
