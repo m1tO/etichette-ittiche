@@ -31,10 +31,10 @@ def init_db():
 
 init_db()
 
-LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"]
+LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche", ""]
 MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
-# --- 2. LOGICA AI (PROMPT BLINDATO E RIPRISTINATO) ---
+# --- 2. LOGICA AI (PROMPT AGGIORNATO PER PRODOTTI NON ITTICI E SCADENZE) ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -43,19 +43,23 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        # RIPRISTINO DELLE REGOLE TASSATIVE NEL PROMPT
         prompt = f"""
-        Analizza questa fattura ittica e restituisci un JSON con due chiavi: 'prodotti' (array) e 'rif_fattura' (stringa).
+        Analizza questa fattura commerciale e restituisci un JSON con 'prodotti' (array) e 'rif_fattura' (stringa).
 
-        REGOLE TASSATIVE PER IL METODO E ATTREZZO:
-        1. Se leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO', attrezzo: 'Sconosciuto'.
+        REGOLE PER PRODOTTI ITTICI (PESCE):
+        1. Se leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
         2. Se leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO', 'RETE' -> metodo: 'PESCATO'.
-        3. Identifica l'attrezzo: RDT=Reti da traino, GNS=Reti da posta, LM=Ami e palangari, PS=Reti da circuizione. Se non specificato usa 'Sconosciuto'.
-        4. Per 'rif_fattura': cerca il numero e la data del documento (es: 'Fattura N. 123 del 10/02/2026').
+        3. Identifica attrezzo (RDT=Reti da traino, etc.).
 
-        Per ogni prodotto estrai: nome, sci (nome scientifico), lotto, metodo, zona, origine, attrezzo.
-        Restituisci SOLO il JSON puro.
-        Testo: {testo_pdf}
+        REGOLE PER PRODOTTI NON ITTICI (SECCO, CONSERVE, ETC.):
+        1. Se il prodotto NON è ittico (es. Olio, Pomodoro, Sale, Pasta) -> metodo, zona, sci, attrezzo devono essere stringhe VUOTE "".
+        
+        REGOLE GENERALI:
+        1. Estrai sempre: nome, lotto, origine e SCADENZA (cerca date vicino a TMC o Scadenza).
+        2. Per 'rif_fattura': Numero e Data documento.
+        3. NON inventare 'ALLEVATO' se il prodotto è secco o se non ci sono prove.
+
+        Restituisci SOLO JSON. Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
@@ -67,13 +71,21 @@ def disegna_su_pdf(pdf, p):
     pdf.add_page(); pdf.set_margins(4, 3, 4); w_full = 92
     pdf.set_y(3); pdf.set_font("helvetica", "B", 8); pdf.cell(w_full, 4, "ITTICA CATANZARO - PALERMO", 0, 1, 'C')
     pdf.set_y(7); pdf.set_font("helvetica", "B", 18); pdf.multi_cell(w_full, 7, str(p.get('nome','')).upper(), 0, 'C')
-    pdf.set_y(16); pdf.set_font("helvetica", "I", 10); pdf.multi_cell(w_full, 4, f"({str(p.get('sci',''))})", 0, 'C')
-    metodo = str(p.get('metodo', 'PESCATO')).upper()
+    
+    # Se scientifico esiste, lo scrive
+    if p.get('sci'):
+        pdf.set_y(16); pdf.set_font("helvetica", "I", 10); pdf.multi_cell(w_full, 4, f"({str(p.get('sci',''))})", 0, 'C')
+    
+    metodo = str(p.get('metodo', '')).upper()
     pdf.set_y(23); pdf.set_font("helvetica", "", 9)
-    if "ALLEVATO" in metodo: testo = f"ALLEVATO IN: {str(p.get('origine','')).upper()} (Zona: {p.get('zona','')})"
-    else:
+    if metodo == "ALLEVATO":
+        testo = f"ALLEVATO IN: {str(p.get('origine','')).upper()} (Zona: {p.get('zona','')})"
+    elif metodo == "PESCATO":
         attr = f" CON {str(p.get('attrezzo','')).upper()}" if p.get('attrezzo') else ""
         testo = f"PESCATO{attr}\nZONA: {p.get('zona','')} - {str(p.get('origine','')).upper()}"
+    else:
+        testo = f"ORIGINE: {str(p.get('origine','')).upper()}" # Per prodotti non ittici
+    
     pdf.multi_cell(w_full, 4, testo, 0, 'C')
     if p.get('prezzo'):
         pdf.set_y(36); pdf.set_font("helvetica", "B", 22); pdf.cell(w_full, 8, f"{p.get('prezzo','')} EUR/Kg", 0, 1, 'C')
@@ -115,7 +127,7 @@ with tab_et:
                     st.rerun()
         with s2:
             if st.button("➕ Crea Nuova Etichetta"):
-                st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]
+                st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "", "zona": "", "origine": "ITALIA", "attrezzo": "", "conf": "", "scadenza": "", "prezzo": ""}]
                 st.session_state.rif_fattura_auto = ""; st.rerun()
     else:
         rif_fattura = st.text_input("📝 Riferimento Fattura (rilevato)", value=st.session_state.get("rif_fattura_auto", ""))
@@ -147,7 +159,7 @@ with tab_et:
                 
                 r2_1, r2_2 = st.columns(2)
                 p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
-                p['metodo'] = r2_2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
+                p['metodo'] = r2_2.selectbox("Metodo", ["", "PESCATO", "ALLEVATO"], index=0 if not p.get('metodo') else (1 if p['metodo']=="PESCATO" else 2), key=f"m_{i}")
                 
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
