@@ -34,7 +34,7 @@ init_db()
 LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"]
 MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
-# --- 2. LOGICA AI (AGGIORNATA PER ESTRARRE FATTURA) ---
+# --- 2. LOGICA AI (PROMPT BLINDATO E RIPRISTINATO) ---
 if "GEMINI_API_KEY" in st.secrets: api_key = st.secrets["GEMINI_API_KEY"]
 else: api_key = st.sidebar.text_input("🔑 API Key Gemini", type="password")
 
@@ -43,11 +43,18 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
+        # RIPRISTINO DELLE REGOLE TASSATIVE NEL PROMPT
         prompt = f"""
-        Analizza questa fattura ittica. REGOLE:
-        1. Estrai un array di oggetti 'prodotti' con: nome, sci, lotto, metodo, zona, origine, attrezzo.
-        2. Cerca il numero della fattura e la data e crea una stringa 'rif_fattura' (es: 'Fattura N. 123 del 10/02/2026').
-        3. Restituisci SOLO un JSON con queste due chiavi.
+        Analizza questa fattura ittica e restituisci un JSON con due chiavi: 'prodotti' (array) e 'rif_fattura' (stringa).
+
+        REGOLE TASSATIVE PER IL METODO E ATTREZZO:
+        1. Se leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO', attrezzo: 'Sconosciuto'.
+        2. Se leggi 'RDT', 'LM', 'EF', 'GNS', 'PESCATO', 'RETE' -> metodo: 'PESCATO'.
+        3. Identifica l'attrezzo: RDT=Reti da traino, GNS=Reti da posta, LM=Ami e palangari, PS=Reti da circuizione. Se non specificato usa 'Sconosciuto'.
+        4. Per 'rif_fattura': cerca il numero e la data del documento (es: 'Fattura N. 123 del 10/02/2026').
+
+        Per ogni prodotto estrai: nome, sci (nome scientifico), lotto, metodo, zona, origine, attrezzo.
+        Restituisci SOLO il JSON puro.
         Testo: {testo_pdf}
         """
         response = model.generate_content(prompt)
@@ -111,7 +118,6 @@ with tab_et:
                 st.session_state.prodotti = [{"nome": "NUOVO PRODOTTO", "sci": "", "lotto": "", "metodo": "PESCATO", "zona": "37.1.3", "origine": "ITALIA", "attrezzo": "Sconosciuto", "conf": "", "scadenza": "", "prezzo": ""}]
                 st.session_state.rif_fattura_auto = ""; st.rerun()
     else:
-        # CAMPO AUTO-COMPILATO
         rif_fattura = st.text_input("📝 Riferimento Fattura (rilevato)", value=st.session_state.get("rif_fattura_auto", ""))
         
         c_rull, c_car_all, c_exit = st.columns([1, 2, 1])
@@ -138,12 +144,16 @@ with tab_et:
                               (p['nome'], p.get('sci'), p.get('lotto'), p.get('metodo'), p.get('zona'), p.get('origine'), datetime.now().strftime("%d/%m/%Y"), rif_fattura))
                     conn.commit(); conn.close(); st.toast("✅ Caricato!"); st.rerun()
                 btn_cols[1].download_button("Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
-                r2_1, r2_2 = st.columns(2); p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
+                
+                r2_1, r2_2 = st.columns(2)
+                p['sci'] = r2_1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
                 p['metodo'] = r2_2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
+                
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
                     p['attrezzo'] = st.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
                 else: st.write("")
+                
                 r4_1, r4_2 = st.columns(2); p['origine'] = r4_1.text_input("Nazione", p.get('origine',''), key=f"o_{i}"); p['zona'] = r4_2.text_input("Zona FAO", p.get('zona',''), key=f"z_{i}")
                 r5_1, r5_2 = st.columns(2); p['conf'] = r5_1.text_input("Conf.", p.get('conf',''), key=f"cf_{i}"); p['scadenza'] = r5_2.text_input("Scad.", p.get('scadenza',''), key=f"sc_{i}")
                 p['prezzo'] = st.text_input("Prezzo €/Kg", p.get('prezzo',''), key=f"pr_{i}")
