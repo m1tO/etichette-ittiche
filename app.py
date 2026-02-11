@@ -26,8 +26,8 @@ def init_db():
 init_db()
 
 LISTA_ATTREZZI = ["Sconosciuto", "Reti da traino", "Reti da posta", "Ami e palangari", "Reti da circuizione", "Nasse e trappole", "Draghe", "Raccolta manuale", "Sciabiche"]
-MODELLI_AI = {"⚡ Gemini 2.5 Flash": "gemini-2.5-flash", "🧊 Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite", "🔥 Gemini 3 Flash": "gemini-3-flash"}
 
+# --- STILE CSS (BOTTONI VERDI E LAYOUT PULITO) ---
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
@@ -38,6 +38,7 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 20px !important; font-weight: 600 !important; color: #4facfe !important;
     }
+    /* Tasto Carica Verde */
     button[kind="primary"] { background-color: #28a745 !important; border-color: #28a745 !important; color: white !important; }
     .stButton > button { border-radius: 6px; font-weight: bold !important; height: 35px; }
     .stTextInput input, .stSelectbox select { background-color: #1a1c24 !important; border: 1px solid #464b5c !important; color: white !important; }
@@ -53,11 +54,7 @@ def chiedi_a_gemini(testo_pdf, model_name):
     genai.configure(api_key=api_key)
     try:
         model = genai.GenerativeModel(model_name)
-        prompt = f"""Analizza questa fattura ittica ed estrai un array JSON. REGOLE:
-        - SE leggi 'AI' o 'ALLEVATO' -> metodo: 'ALLEVATO'.
-        - SE leggi 'RDT', 'LM', 'EF', 'GNS' -> metodo: 'PESCATO' con relativo attrezzo.
-        - Se incerto, usa 'PESCATO'.
-        JSON: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"""
+        prompt = f"Analizza fattura ittica. REGOLE: AI->ALLEVATO, RDT->Reti da traino, LM/EF->Ami e palangari. JSON array: nome, sci, lotto, metodo, zona, origine, attrezzo. Testo: {testo_pdf}"
         response = model.generate_content(prompt)
         txt = response.text.replace('```json', '').replace('```', '').strip()
         return json.loads(txt)
@@ -102,7 +99,7 @@ with tab_et:
         with s1:
             file = st.file_uploader("Fattura PDF", type="pdf")
             if file and st.button("🚀 Analizza"):
-                with st.spinner("Analisi..."):
+                with st.spinner("Analisi in corso..."):
                     reader = PdfReader(file); text = " ".join([p.extract_text() for p in reader.pages])
                     res = chiedi_a_gemini(text, "gemini-2.5-flash")
                     if res:
@@ -110,8 +107,8 @@ with tab_et:
                         st.session_state.prodotti = res; st.rerun()
     else:
         # BARRA SUPERIORE BILANCIATA
-        c_rull, c_car_all, c_exit = st.columns([1.5, 3, 1])
-        with c_rull: st.download_button("🖨️ RULLINO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
+        c_rull, c_car_all, c_exit = st.columns([1, 2, 1])
+        with c_rull: st.download_button("🖨️ RULLINO COMPLETO", genera_pdf_bytes(st.session_state.prodotti), "Rullino.pdf")
         with c_car_all: 
             if st.button("📥 CARICA TUTTO IN MAGAZZINO", type="primary"):
                 conn = sqlite3.connect(DB_FILE); c = conn.cursor(); dt = datetime.now().strftime("%d/%m/%Y")
@@ -126,13 +123,13 @@ with tab_et:
         
         for i, p in enumerate(st.session_state.prodotti):
             with st.container(border=True):
-                # RIGA 1: NOME COMMERCIALE E LOTTO
-                r1_c1, r1_c2, r1_btn = st.columns([2, 3, 1])
-                p['nome'] = r1_c1.text_input("Nome Commerciale", p.get('nome','').upper(), key=f"n_{i}")
-                p['lotto'] = r1_c2.text_input("Lotto", p.get('lotto',''), key=f"l_{i}")
+                # RIGA 1: NOME (CORTO) E LOTTO + BOTTONI
+                r1_left, r1_mid, r1_right = st.columns([1.5, 3, 1])
+                p['nome'] = r1_left.text_input("Nome", p.get('nome','').upper(), key=f"n_{i}", label_visibility="collapsed")
+                p['lotto'] = r1_mid.text_input("Lotto", p.get('lotto',''), key=f"l_{i}", label_visibility="collapsed")
                 
-                # Tasti Carica e Stampa (vicini)
-                btn_cols = r1_btn.columns([1, 1], gap="small")
+                # Tasti Carica (Verde) e Stampa
+                btn_cols = r1_right.columns([1, 1], gap="small")
                 if btn_cols[0].button("📥 Carica", key=f"sv_{i}", type="primary"):
                     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
                     c.execute("INSERT INTO magazzino (nome, sci, lotto, metodo, zona, origine, data_carico) VALUES (?,?,?,?,?,?,?)",
@@ -140,16 +137,17 @@ with tab_et:
                     conn.commit(); conn.close(); st.toast("✅ Registrato!")
                 btn_cols[1].download_button("🖨️ Stampa", genera_pdf_bytes([p]), f"{p['nome']}.pdf", key=f"dl_s_{i}")
 
-                # RIGA 2: NOME SCIENTIFICO
-                p['sci'] = st.text_input("Nome Scientifico", p.get('sci',''), key=f"s_{i}")
+                # RIGA 2: SCIENTIFICO E METODO
+                r2_c1, r2_c2 = st.columns([1, 1])
+                p['sci'] = r2_c1.text_input("Scientifico", p.get('sci',''), key=f"s_{i}")
+                p['metodo'] = r2_c2.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
 
-                # RIGA 3: METODO E ATTREZZO
-                r3_c1, r3_c2 = st.columns([1, 1])
-                p['metodo'] = r3_c1.selectbox("Metodo", ["PESCATO", "ALLEVATO"], index=0 if "PESCATO" in str(p.get('metodo','')).upper() else 1, key=f"m_{i}")
+                # RIGA 3: ATTREZZO (RIGA DEDICATA O VUOTA)
                 if p['metodo'] == "PESCATO":
                     a_idx = LISTA_ATTREZZI.index(p['attrezzo']) if p.get('attrezzo') in LISTA_ATTREZZI else 0
-                    p['attrezzo'] = r3_c2.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
-                else: r3_c2.empty()
+                    p['attrezzo'] = st.selectbox("Attrezzo", LISTA_ATTREZZI, index=a_idx, key=f"a_{i}")
+                else:
+                    st.write("") # Spazio vuoto se allevato
 
                 # RIGA 4: NAZIONE E ZONA
                 r4_c1, r4_c2 = st.columns([1, 1])
@@ -158,11 +156,11 @@ with tab_et:
 
                 # RIGA 5: CONF E SCAD
                 r5_c1, r5_c2 = st.columns([1, 1])
-                p['conf'] = r5_c1.text_input("Confezionamento", p.get('conf',''), key=f"cf_{i}")
-                p['scadenza'] = r5_c2.text_input("Scadenza", p.get('scadenza',''), key=f"sc_{i}")
+                p['conf'] = r5_c1.text_input("Conf.", p.get('conf',''), key=f"cf_{i}")
+                p['scadenza'] = r5_c2.text_input("Scad.", p.get('scadenza',''), key=f"sc_{i}")
 
-                # RIGA 6: PREZZO E ANTEPRIMA (FINE SCHEDA)
+                # RIGA 6: PREZZO
                 p['prezzo'] = st.text_input("Prezzo €/Kg", p.get('prezzo',''), key=f"pr_{i}")
-                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=250)
 
-# (Tab Magazzino e Gastro rimangono invariate)
+                # ANTEPRIMA (FINE SCHEDA)
+                st.image(converti_pdf_in_immagine(genera_pdf_bytes([p])), width=250)
